@@ -3,6 +3,8 @@
 import React, { use, useEffect, useState } from 'react';
 import type { PublicForm } from '@/backend/lib/candidates/applications';
 import type { ApplicationField } from '@/backend/lib/candidates/outreach-settings';
+import { MapPin } from 'lucide-react';
+import { FormDocument, PublicFormPage } from '@/frontend/components/recruitment/PublicFormPage';
 
 /**
  * The job application form: /apply/<token> (owner 2026-11-24). No sign-in; the link is the key. The questions are the
@@ -69,7 +71,9 @@ export default function ApplyPage({ params }: { params: Promise<{ token: string 
         const value = answers[f.id] ?? '';
         const set = (v: string) => setAnswers(a => ({ ...a, [f.id]: v }));
         const invalid = error?.field === f.id;
-        const common = { id, name: f.id, required: f.required, disabled: busy, 'aria-invalid': invalid || undefined, className: `${INPUT} ${invalid ? 'border-rose-500' : ''}` };
+        const common = { id, name: f.id, required: f.required, disabled: busy, 'aria-invalid': invalid || undefined,
+            'aria-describedby': [f.help && id + '-help', invalid && id + '-error'].filter(Boolean).join(' ') || undefined,
+            className: `${INPUT} ${invalid ? 'border-rose-500' : ''}` };
         let input: React.ReactNode;
         if (f.type === 'textarea') input = <textarea {...common} rows={4} value={value} onChange={e => set(e.target.value)} maxLength={3000} />;
         else if (f.type === 'select') input = (
@@ -88,60 +92,66 @@ export default function ApplyPage({ params }: { params: Promise<{ token: string 
                 autoComplete={f.target === 'fullName' ? 'name' : f.target === 'email' ? 'email' : f.target === 'phone' ? 'tel' : undefined} maxLength={f.type === 'number' ? undefined : 500} />
         );
         return (
-            <div key={f.id}>
+            <div key={f.id} className={['textarea', 'file'].includes(f.type) ? 'rf-field rf-wide' : 'rf-field'}>
                 <label htmlFor={id} className="text-sm font-semibold text-slate-800">{f.label}{f.required ? <span className="text-rose-600"> *</span> : <span className="font-normal text-slate-400"> (optional)</span>}</label>
-                {f.help && <p className="text-xs text-slate-500">{f.help}</p>}
+                {f.help && <p id={id + '-help'} className="rf-sub text-sm">{f.help}</p>}
                 {input}
-                {invalid && <p className="mt-1 text-sm text-rose-700">{error?.text}</p>}
+                {invalid && <p id={id + '-error'} role="alert" className="mt-1 text-sm text-rose-700">{error?.text}</p>}
             </div>
         );
     };
 
     return (
-        <main className="min-h-screen bg-slate-100 px-4 py-8 text-slate-900 sm:py-12">
-            <div className="mx-auto max-w-xl">
-                {!form && !loadError && <p className="text-center text-sm text-slate-500">Loading the form…</p>}
+        <PublicFormPage company={form?.companyName} title="Candidate portal">
+            <div className="rf-stack">
+                {!form && !loadError && <p role="status" className="rf-status">Loading the form…</p>}
                 {loadError && (
-                    <div className="rounded-2xl bg-white p-6 text-center shadow-sm">
+                    <div className="rf-status" role="alert">
                         <h1 className="text-lg font-bold">This link is not open</h1>
                         <p className="mt-1 text-sm text-slate-600">{loadError}</p>
                     </div>
                 )}
                 {form && thanks && (
-                    <div className="rounded-2xl bg-white p-6 text-center shadow-sm" role="status">
+                    <div className="rf-status" role="status">
                         <h1 className="text-xl font-bold">{form.kind === 'assignment' ? 'Assignment submitted' : form.kind === 'documents' ? 'Documents received' : form.kind === 'screening' ? 'Answers sent' : 'Application sent'}</h1>
                         <p className="mt-2 text-[15px] text-slate-700">{thanks}</p>
                     </div>
                 )}
                 {form && !thanks && (
-                    <form onSubmit={submit} noValidate className="space-y-5 rounded-2xl bg-white p-5 shadow-sm sm:p-7">
-                        <header>
-                            <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">{form.companyName}</p>
-                            <h1 className="mt-1 text-2xl font-bold leading-tight">{form.role ? `${form.form.title}: ${form.role}` : form.form.title}</h1>
-                            {form.location && <p className="text-sm text-slate-600">{form.location}</p>}
-                            <p className="mt-3 text-[15px] text-slate-700">{form.firstName ? `Hello ${form.firstName}. ` : ''}{form.form.intro}</p>
+                    <form onSubmit={submit} noValidate className="rf-column">
+                        <header className="rf-card rf-hero">
+                            {form.role && <p className="rf-kicker">{form.form.title}</p>}
+                            <h1>{form.role || form.form.title}</h1>
+                            {form.location && <p className="rf-sub flex items-center gap-1.5 text-sm"><MapPin size={15} aria-hidden />{form.location}</p>}
+                            <FormDocument text={`${form.firstName ? `Hello ${form.firstName}. ` : ''}${form.form.intro}`} />
+                            {form.companyProfileUrl && form.kind !== 'documents' && <a href={form.companyProfileUrl} target="_blank" rel="noopener noreferrer" className="rf-link mt-3 inline-block text-sm">About {form.companyName}</a>}
                         </header>
                         {form.assignment && (
-                            <section className="space-y-2 rounded-xl border border-slate-200 bg-slate-50 p-4 text-[15px]">
+                            <section className="rf-card">
                                 <h2 className="font-bold">{form.assignment.title}</h2>
                                 {form.assignment.due && <p className="text-sm font-semibold text-amber-800">Submit by {form.assignment.due}</p>}
-                                <p className="whitespace-pre-wrap text-slate-800">{form.assignment.brief}</p>
-                                {form.assignment.guidelines && <><h3 className="pt-1 text-sm font-semibold">Guidelines</h3><p className="whitespace-pre-wrap text-sm text-slate-700">{form.assignment.guidelines}</p></>}
-                                {form.assignment.driveLink && <p><a href={form.assignment.driveLink} target="_blank" rel="noopener noreferrer" className="font-semibold text-blue-700 underline">Open the assignment files</a></p>}
+                                <FormDocument text={form.assignment.brief} />
+                                {form.assignment.guidelines && <><h3>Guidelines</h3><FormDocument text={form.assignment.guidelines} /></>}
+                                {form.assignment.driveLink && <a href={form.assignment.driveLink} target="_blank" rel="noopener noreferrer" className="rf-secondary mt-3">Open the assignment files</a>}
                             </section>
                         )}
-                        {form.companyProfileUrl && form.kind !== 'documents' && <p className="text-sm"><a href={form.companyProfileUrl} target="_blank" rel="noopener noreferrer" className="text-blue-700 underline">About {form.companyName}</a></p>}
-                        {form.form.fields.map(field)}
-                        <label className={`flex items-start gap-3 rounded-xl border p-3 text-sm ${error?.field === 'consent' ? 'border-rose-500' : 'border-slate-200'}`}>
-                            <input id="f-consent" type="checkbox" checked={consent} onChange={e => setConsent(e.target.checked)} disabled={busy} className="mt-0.5 h-4 w-4 accent-slate-900" />
-                            <span className="text-slate-700">{form.form.consentText}</span>
-                        </label>
-                        {error && !form.form.fields.some(f => f.id === error.field) && <p role="alert" className="rounded-xl bg-rose-50 px-3 py-2 text-sm text-rose-800">{error.text}</p>}
-                        <button type="submit" disabled={busy} className="w-full rounded-xl bg-slate-900 px-4 py-3 text-[15px] font-bold text-white disabled:opacity-60">{busy ? 'Sending…' : form.kind === 'assignment' ? 'Submit assignment' : form.kind === 'documents' ? 'Upload documents' : form.kind === 'screening' ? 'Send answers' : 'Submit application'}</button>
-                        <p className="text-center text-xs text-slate-400">Fields marked * are required.</p>
+                        <section className="rf-card">
+                            <h2>{form.kind === 'assignment' ? 'Your submission' : form.kind === 'documents' ? 'Requested files' : form.kind === 'screening' ? 'Your responses' : 'Application details'}</h2>
+                            <p className="mb-5 text-sm text-stone-600">Fields marked * are required.</p>
+                            <div className="rf-fields">{form.form.fields.map(field)}</div>
+                        </section>
+                        <section className="rf-card space-y-4">
+                            <h2>Consent and submission</h2>
+                            <label className="rf-consent flex items-start gap-3 text-sm">
+                                <input id="f-consent" type="checkbox" checked={consent} onChange={e => setConsent(e.target.checked)} disabled={busy} className="mt-0.5 h-4 w-4 accent-slate-900" />
+                                <span className="text-slate-700">{form.form.consentText}</span>
+                            </label>
+                            {error && !form.form.fields.some(f => f.id === error.field) && <p role="alert" className="rounded-xl bg-rose-50 px-3 py-2 text-sm text-rose-800">{error.text}</p>}
+                            <button type="submit" disabled={busy} className="rf-primary">{busy ? 'Sending…' : form.kind === 'assignment' ? 'Submit assignment' : form.kind === 'documents' ? 'Upload documents' : form.kind === 'screening' ? 'Send answers' : 'Submit application'}</button>
+                        </section>
                     </form>
                 )}
             </div>
-        </main>
+        </PublicFormPage>
     );
 }

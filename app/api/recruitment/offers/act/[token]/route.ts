@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 
 import { getCandidatesAdmin } from "@/backend/lib/candidates/access";
 import { breakupGroups, decideOffer, defaultFlowDeps, lpa, OFFER_ENTITY, OFFER_LEVEL_LABELS, type OfferLevel, type OfferLinkSummary } from "@/backend/lib/candidates/hiring";
+import { escapeReviewText as esc, reviewPage } from "@/backend/lib/candidates/review-page";
 import { CandidateActionError } from "@/backend/lib/candidates/records";
 import { actionPage } from "@/backend/lib/emailActions/page";
 import { consumeEmailActionToken, peekEmailActionToken, recordTokenResult } from "@/backend/lib/emailActions/tokens";
@@ -15,7 +16,6 @@ import { consumeEmailActionToken, peekEmailActionToken, recordTokenResult } from
 export const dynamic = "force-dynamic";
 
 const html = (body: string, status = 200) => new NextResponse(body, { status, headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" } });
-const esc = (s: unknown) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c] as string));
 const inr = (v: number) => `₹${Math.round(v).toLocaleString("en-IN")}`;
 const used = () => html(actionPage({ kind: "error", title: "This link is not valid or has been used", message: "It may have expired, or the offer was already decided. Ask HR for the current status." }), 410);
 
@@ -33,36 +33,23 @@ function decisionPage(summary: OfferLinkSummary, level: OfferLevel, error: strin
   const breakup = `${group("Earnings (per month)", g.earnings, ["Gross per month", g.gross])}${group("Deductions (per month)", g.deductions, ["Net per month", g.net])}${group("Benefits (per year)", g.benefits, null)}${group("Other", g.other, null)}`;
   const choice = (value: string, label: string, hint: string) =>
     `<label class="opt"><input type="radio" name="decision" value="${value}" ${chosen === value ? "checked" : ""} required><span><b>${label}</b><small>${hint}</small></span></label>`;
-  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Offer for ${esc(summary.candidateName)}</title>
-<style>
-body{margin:0;background:#f1f5f9;font:16px/1.5 system-ui,-apple-system,Segoe UI,Roboto,sans-serif;color:#0f172a}
-main{max-width:560px;margin:0 auto;padding:20px 16px 48px}
-.card{background:#fff;border-radius:16px;padding:20px;box-shadow:0 1px 3px rgba(15,23,42,.08)}
-h1{font-size:20px;margin:0 0 4px}p{margin:8px 0}
-table{border-collapse:collapse;width:100%;font-size:14px;margin:12px 0}td{padding:5px 0;vertical-align:top}td:first-child{color:#64748b;width:50%}.n{text-align:right}.g{padding-top:12px;font-weight:700;color:#0f172a}
-.just{white-space:pre-wrap;background:#f8fafc;border-radius:10px;padding:10px;font-size:14px}
-.opt{display:flex;gap:10px;align-items:flex-start;padding:10px 12px;border:1px solid #e2e8f0;border-radius:12px;margin:8px 0;cursor:pointer}.opt input{margin-top:5px}.opt small{display:block;color:#64748b}
-textarea{width:100%;box-sizing:border-box;border:1px solid #cbd5e1;border-radius:10px;padding:10px;font:inherit;min-height:80px}
-.btn{display:block;width:100%;margin-top:14px;background:#1e293b;color:#fff;border:0;border-radius:12px;padding:14px;font:inherit;font-weight:700;cursor:pointer}
-.err{background:#fef2f2;border:1px solid #fecaca;color:#991b1b;border-radius:10px;padding:10px;font-size:14px}
-.muted{color:#64748b;font-size:13px}
-</style></head><body><main><div class="card">
+  return reviewPage("Offer approval", `<section class="rf-card rf-hero"><p class="rf-kicker">Offer approval</p>
 <h1>Offer for ${esc(summary.candidateName)}</h1>
 <p class="muted">Your decision as ${esc(OFFER_LEVEL_LABELS[level])}. The candidate sees nothing until every approval is in. Nothing is recorded until you press the button.</p>
-${error ? `<p class="err">${esc(error)}</p>` : ""}
-<table>${rows.map(([k, v]) => `<tr><td>${esc(k)}</td><td>${esc(v)}</td></tr>`).join("")}</table>
+${error ? `<p class="err" role="alert">${esc(error)}</p>` : ""}
+</section><section class="rf-card"><h2>Offer details</h2><table>${rows.map(([k, v]) => `<tr><td>${esc(k)}</td><td>${esc(v)}</td></tr>`).join("")}</table>
 ${breakup ? `<p class="muted">Salary breakup (annexure)</p><table>${breakup}</table>` : `<p class="muted">No breakup given yet.</p>`}
 ${summary.note ? `<p class="muted">Note from HR</p><div class="just">${esc(summary.note)}</div>` : ""}
-<form method="POST" action="">
+</section><section class="rf-card"><form method="POST" action=""><fieldset><legend>Your decision</legend>
 ${choice("approve", "Approve", level === "director" ? "The letter goes to HR to release." : "It goes on to the next approver.")}
 ${choice("revise", "Send back for a change", "HR changes the offer or the breakup. Say what to change.")}
 ${choice("reject", "Reject", "Final. Give the reason.")}
-<label class="muted" for="reason">Reason or note</label>
+</fieldset><label class="muted" for="reason">Reason or note</label>
 <textarea id="reason" name="reason" maxlength="2000" placeholder="Required to send back or reject">${esc(reason)}</textarea>
-<button class="btn" type="submit">Record my decision</button>
+<button class="rf-primary" type="submit">Record my decision</button>
 </form>
 <p class="muted">This link works once.</p>
-</div></main></body></html>`;
+</section>`);
 }
 
 const read = (peek: Peek | null) => {

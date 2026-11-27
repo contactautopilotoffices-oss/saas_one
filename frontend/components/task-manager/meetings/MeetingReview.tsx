@@ -360,7 +360,7 @@ export default function MeetingReview({ space, meetingId, people: peopleWithVoic
                                             if (wa) {
                                                 parts.push([
                                                     wa.sent ? `WhatsApp sent to ${wa.sent}.` : 'WhatsApp: none sent.',
-                                                    wa.failed ? `${wa.failed} failed (is the "meeting_link_v1" template approved?).` : '',
+                                                    wa.failed ? `${wa.failed} failed. Check that the WhatsApp invite template is approved and its AiSensy campaign is live.` : '',
                                                     wa.noContact ? `${wa.noContact} without a phone number.` : '',
                                                 ].filter(Boolean).join(' '));
                                             }

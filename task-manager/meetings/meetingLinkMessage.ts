@@ -2,7 +2,7 @@
  * Owner 2026-11-26: "Send meeting link" (WhatsApp via Meta-approved AiSensy template + Email) for online meetings.
  * Kept free of database imports so it can be tested offline.
  *
- * Meta / AiSensy template (`meeting_link_v1`, category UTILITY, language en):
+ * Meta / AiSensy template (`video_meeting_link_v1`, category UTILITY, language en):
  *   Hello {{1}},
  *
  *   You are invited to the online meeting "{{2}}" hosted by {{3}}.
@@ -13,7 +13,7 @@
  *   Please open the link at the meeting time to join the call.
  */
 
-export const MEETING_LINK_CAMPAIGN = process.env.AISENSY_MEETING_LINK_CAMPAIGN || 'meeting_link_v1';
+export const MEETING_LINK_CAMPAIGN = process.env.AISENSY_MEETING_LINK_CAMPAIGN || 'video_meeting_link_v1';
 
 const DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
@@ -51,7 +51,7 @@ export interface LinkMessageInput {
     joinUrl: string;
 }
 
-/** Five single-line variables for `meeting_link_v1`, kept well within Meta's 1024-char body limit. */
+/** Five single-line variables for the video meeting invite, kept well within Meta's 1024-char body limit. */
 export function linkParams(i: LinkMessageInput): [string, string, string, string, string] {
     return [
         one(i.recipientName.split(' ')[0] || 'there', 40) || 'there',
@@ -62,7 +62,7 @@ export function linkParams(i: LinkMessageInput): [string, string, string, string
     ];
 }
 
-/** Filled template text (Pretend-Mode preview and logs). Matches `meeting_link_v1`. */
+/** Filled template text for the video meeting invite preview and logs. */
 export function linkPreview(p: string[]): string {
     return `Hello ${p[0]},\n\nYou are invited to the online meeting "${p[1]}" hosted by ${p[2]}.\n\n`
         + `When: ${p[3]}\nJoin link: ${p[4]}\n\nPlease open the link at the meeting time to join the call.`;

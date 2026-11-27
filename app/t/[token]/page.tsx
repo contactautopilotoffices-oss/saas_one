@@ -10,5 +10,8 @@ import ProctorRunner from '@/frontend/components/proctor/ProctorRunner';
  */
 export default function PublicTestPage({ params }: { params: Promise<{ token: string }> }) {
     const { token } = use(params);
-    return <ProctorRunner mode="public" token={token} />;
+    return <div className="rf rf-assessment">
+        <link rel="stylesheet" href="/apply/assets/recruitment-forms.css" precedence="recruitment" />
+        <ProctorRunner mode="public" token={token} />
+    </div>;
 }

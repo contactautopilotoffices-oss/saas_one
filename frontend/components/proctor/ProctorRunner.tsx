@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { AlertTriangle, Camera, CheckCircle2, Clock, Lock, Mic, ShieldAlert, Video, XCircle } from 'lucide-react';
 import { createDeviceDetector, type DeviceDetector, type DeviceObservation } from '@/frontend/lib/proctor/deviceDetector';
+import { FormDocument } from '@/frontend/components/recruitment/PublicFormPage';
 
 /**
  * The locked test page, used two ways:
@@ -737,15 +738,15 @@ export default function ProctorRunner({ mode, testId, token }: { mode: 'authed' 
         const identified = nameOk && emailOk;
         const canEnableMedia = mode === 'authed' || identified;
         return (
-            <div className="min-h-screen bg-slate-50 px-4 py-10">
-                <div className="mx-auto max-w-xl space-y-6">
-                    <div>
+            <div className="assessment-setup min-h-screen bg-slate-50 px-4 py-10">
+                <div className="assessment-layout mx-auto max-w-xl space-y-6">
+                    <div className="assessment-heading">
                         <p className="text-xs font-bold uppercase tracking-wider text-slate-400">Proctored test</p>
                         <h1 className="text-2xl font-black text-slate-900">{test?.title}</h1>
                         <p className="mt-1 text-sm text-slate-500">
                             {test?.question_count} questions · {test?.duration_minutes} minutes{test?.ai_monitoring ? ' · AI camera monitoring' : ''}
                         </p>
-                        {test?.instructions && <p className="mt-3 text-sm text-slate-700 whitespace-pre-wrap">{test.instructions}</p>}
+                        {test?.instructions && (mode === 'public' ? <FormDocument text={test.instructions} /> : <p className="mt-3 text-sm text-slate-700 whitespace-pre-wrap">{test.instructions}</p>)}
                         {previousNote && <p className="mt-3 rounded-xl bg-amber-50 p-3 text-sm font-bold text-amber-900">{previousNote}</p>}
                     </div>
 
@@ -764,7 +765,7 @@ export default function ProctorRunner({ mode, testId, token }: { mode: 'authed' 
                         </div>
                     )}
 
-                    <div className="rounded-2xl border border-rose-200 bg-rose-50 p-4">
+                    <div className="assessment-rules rounded-2xl border border-rose-200 bg-rose-50 p-4">
                         <p className="flex items-center gap-2 text-sm font-black text-rose-900"><Lock className="w-4 h-4" /> Once you start, the test is locked to this screen</p>
                         <ul className="mt-2 list-disc pl-5 text-sm text-rose-900/80 space-y-1">
                             <li>Switching tabs, switching apps, pressing <b>Esc</b> or leaving fullscreen gives you a warning. You get {plural(LEAVE_WARNINGS, 'warning')}; the next time <b>ends the test</b>.</li>
@@ -779,7 +780,7 @@ export default function ProctorRunner({ mode, testId, token }: { mode: 'authed' 
                         </ul>
                     </div>
 
-                    <div className="rounded-2xl border border-slate-200 bg-white p-5 space-y-4">
+                    <div className="assessment-entry rounded-2xl border border-slate-200 bg-white p-5 space-y-4">
                         {mode === 'public' && (
                             <div className="space-y-3">
                                 <div className="flex items-center gap-3">

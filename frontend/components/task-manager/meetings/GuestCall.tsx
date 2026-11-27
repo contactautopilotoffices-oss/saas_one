@@ -147,20 +147,21 @@ export default function GuestCall({ token }: { token: string }) {
     }
 
     return (
-        <main className="flex min-h-screen items-center justify-center bg-zinc-950 px-4 py-10 text-white">
-            <div className="w-full max-w-md space-y-5 rounded-3xl border border-white/10 bg-zinc-900 p-6 shadow-xl">
+        <main className="rf flex min-h-screen items-center justify-center px-4 py-10">
+            <link rel="stylesheet" href="/apply/assets/recruitment-forms.css" precedence="recruitment" />
+            <div className="rf-card rf-hero w-full max-w-lg space-y-5">
                 {stage === 'gone' ? (
                     <End icon={XCircle} title="This link does not work" text="The link is not valid. Please ask the person who invited you for a new one." />
                 ) : !info && !error ? (
-                    <p className="flex items-center gap-2 text-sm text-zinc-400"><Loader2 className="h-4 w-4 animate-spin" /> Loading the meeting…</p>
+                    <p className="flex items-center gap-2 text-sm text-stone-600"><Loader2 className="h-4 w-4 animate-spin" /> Loading the meeting…</p>
                 ) : !info ? (
-                    <p className="rounded-xl bg-red-500/10 px-3 py-2 text-sm font-semibold text-red-300">{error}</p>
+                    <p className="rounded-xl bg-red-500/10 px-3 py-2 text-sm font-semibold text-red-800">{error}</p>
                 ) : (
                     <>
                         <div>
-                            <p className="text-[10px] font-black uppercase tracking-widest text-indigo-300">Online meeting</p>
+                            <p className="rf-kicker">Online meeting</p>
                             <h1 className="mt-1 text-xl font-black">{info.meeting.title}</h1>
-                            <p className="mt-1 text-sm text-zinc-400">With {info.meeting.hostName}{info.meeting.scheduledFor ? ` · ${niceDateTime(info.meeting.scheduledFor)}` : ''}</p>
+                            <p className="mt-1 text-sm text-stone-600">With {info.meeting.hostName}{info.meeting.scheduledFor ? ` · ${niceDateTime(info.meeting.scheduledFor)}` : ''}</p>
                         </div>
 
                         {stage === 'ended' || !info.meeting.open ? (
@@ -174,38 +175,38 @@ export default function GuestCall({ token }: { token: string }) {
                                 <PhoneOff className="mx-auto h-8 w-8 text-zinc-500" />
                                 <p className="text-sm font-bold">You left the call.</p>
                                 {mine && (
-                                    <button type="button" onClick={() => void enter(mine)} className="mx-auto flex items-center gap-2 rounded-xl bg-indigo-600 px-4 py-2.5 text-sm font-black hover:bg-indigo-500">
+                                    <button type="button" onClick={() => void enter(mine)} className="rf-primary">
                                         <RotateCcw className="h-4 w-4" /> Rejoin
                                     </button>
                                 )}
                             </div>
                         ) : stage === 'waiting' ? (
-                            <div className="space-y-3 rounded-xl bg-white/5 p-4 text-center">
-                                <Clock className="mx-auto h-7 w-7 animate-pulse text-indigo-300" />
+                            <div className="space-y-3 rounded-xl bg-stone-100 p-4 text-center">
+                                <Clock className="mx-auto h-7 w-7 animate-pulse text-[var(--accent)]" />
                                 <p className="text-sm font-bold">Please wait, someone will let you in.</p>
-                                <p className="text-xs text-zinc-400">You asked to join as {mine?.name ?? name}. Keep this page open.</p>
-                                {error && <p className="text-xs font-semibold text-red-300">{error}</p>}
+                                <p className="text-xs text-stone-600">You asked to join as {mine?.name ?? name}. Keep this page open.</p>
+                                {error && <p className="text-xs font-semibold text-red-800">{error}</p>}
                             </div>
                         ) : !info.ready ? (
-                            <p className="rounded-xl bg-amber-500/10 px-3 py-3 text-sm text-amber-200">Video calls are not ready yet. Please tell the person who invited you.</p>
+                            <p className="rounded-xl bg-amber-500/10 px-3 py-3 text-sm text-amber-900">Video calls are not ready yet. Please tell the person who invited you.</p>
                         ) : (
                             <>
                                 <label className="block">
-                                    <span className="text-[10px] font-black uppercase tracking-widest text-zinc-400">Your name</span>
+                                    <span className="text-[10px] font-black uppercase tracking-widest text-stone-600">Your name</span>
                                     <input value={name} onChange={e => setName(e.target.value)} maxLength={60} autoComplete="name" placeholder="As others should see it"
-                                        className="mt-1.5 w-full rounded-xl border border-white/15 bg-black/30 px-3.5 py-2.5 text-sm text-white outline-none placeholder:text-zinc-500 focus:border-indigo-400" />
+                                        className="mt-1.5 w-full rounded-xl border border-stone-300 px-3.5 py-2.5" />
                                 </label>
                                 <div className="grid grid-cols-2 gap-2">
                                     <Toggle on={micOn} onClick={() => setMicOn(v => !v)} on_={<Mic className="h-4 w-4" />} off_={<MicOff className="h-4 w-4" />} label={micOn ? 'Microphone on' : 'Microphone off'} />
                                     <Toggle on={camOn} onClick={() => setCamOn(v => !v)} on_={<Video className="h-4 w-4" />} off_={<VideoOff className="h-4 w-4" />} label={camOn ? 'Camera on' : 'Camera off'} />
                                 </div>
-                                {error && <p className="rounded-xl bg-red-500/10 px-3 py-2 text-sm font-semibold text-red-300">{error}</p>}
+                                {error && <p className="rounded-xl bg-red-500/10 px-3 py-2 text-sm font-semibold text-red-800">{error}</p>}
                                 <button type="button" onClick={() => void ask()} disabled={busy || name.trim().length < 2}
-                                    className="flex w-full items-center justify-center gap-2 rounded-2xl bg-indigo-600 px-5 py-3 text-sm font-black hover:bg-indigo-500 disabled:opacity-40">
+                                    className="rf-primary w-full">
                                     {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Video className="h-4 w-4" />} Ask to join
                                 </button>
                                 {/* Owner 2026-11-18: a notice, no tick box */}
-                                <p className="flex items-center justify-center gap-1.5 text-xs font-semibold text-zinc-400"><ShieldCheck className="h-3.5 w-3.5 text-indigo-300" /> This call will be recorded</p>
+                                <p className="flex items-center justify-center gap-1.5 text-xs font-semibold text-stone-600"><ShieldCheck className="h-3.5 w-3.5 text-[var(--accent)]" /> This call will be recorded</p>
                             </>
                         )}
                     </>
@@ -220,7 +221,7 @@ function End({ icon: Icon, title, text }: { icon: typeof Clock; title: string; t
         <div className="space-y-2 text-center">
             <Icon className="mx-auto h-8 w-8 text-zinc-500" />
             <p className="text-sm font-bold">{title}</p>
-            <p className="text-xs text-zinc-400">{text}</p>
+            <p className="text-xs text-stone-600">{text}</p>
         </div>
     );
 }
@@ -228,7 +229,7 @@ function End({ icon: Icon, title, text }: { icon: typeof Clock; title: string; t
 function Toggle({ on, onClick, on_, off_, label }: { on: boolean; onClick: () => void; on_: ReactNode; off_: ReactNode; label: string }) {
     return (
         <button type="button" onClick={onClick} aria-pressed={on}
-            className={`flex items-center justify-center gap-2 rounded-xl border px-3 py-2.5 text-sm font-bold ${on ? 'border-white/15 bg-white/10 text-white' : 'border-red-400/30 bg-red-500/10 text-red-200'}`}>
+            className={`flex items-center justify-center gap-2 rounded-xl border px-3 py-2.5 text-sm font-bold ${on ? 'border-[var(--accent)] bg-[var(--selection)] text-[var(--accent-dark)]' : 'border-stone-300 bg-white text-stone-600'}`}>
             {on ? on_ : off_} {label}
         </button>
     );

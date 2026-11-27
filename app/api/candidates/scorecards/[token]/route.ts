@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 
 import { getCandidatesAdmin } from "@/backend/lib/candidates/access";
 import { getScorecard, SCORECARD_ENTITY, submitScorecard, type ScorecardPayload } from "@/backend/lib/candidates/hiring";
+import { escapeReviewText as esc, reviewPage } from "@/backend/lib/candidates/review-page";
 import { CandidateActionError } from "@/backend/lib/candidates/records";
 import { RECOMMENDATION_LABELS, SCORECARD_SKILLS, type Scorecard } from "@/backend/lib/candidates/types";
 import { actionPage } from "@/backend/lib/emailActions/page";
@@ -16,34 +17,25 @@ import { consumeEmailActionToken, peekEmailActionToken, recordTokenResult, revok
 export const dynamic = "force-dynamic";
 
 const html = (body: string, status = 200) => new NextResponse(body, { status, headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" } });
-const esc = (s: unknown) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c] as string));
-const STYLE = `body{margin:0;background:#f1f5f9;font:16px/1.5 system-ui,-apple-system,Segoe UI,Roboto,sans-serif;color:#0f172a}main{max-width:560px;margin:0 auto;padding:20px 16px 48px}
-.card{background:#fff;border-radius:16px;padding:20px;box-shadow:0 1px 3px rgba(15,23,42,.08);margin-bottom:14px}h1{font-size:20px;margin:0 0 4px}.muted{color:#64748b;font-size:13px}
-.skill{margin:14px 0}.stars{display:flex;gap:6px}.stars label{flex:1;text-align:center;border:1px solid #cbd5e1;border-radius:10px;padding:8px 0;cursor:pointer}.stars input{display:none}.stars input:checked+span{font-weight:800;color:#0f766e}
-.opt{display:inline-flex;gap:6px;align-items:center;border:1px solid #e2e8f0;border-radius:10px;padding:8px 12px;margin:4px 6px 4px 0}
-textarea{width:100%;box-sizing:border-box;border:1px solid #cbd5e1;border-radius:10px;padding:10px;font:inherit;min-height:90px}
-.btn{display:block;width:100%;margin-top:14px;background:#0f766e;color:#fff;border:0;border-radius:12px;padding:14px;font:inherit;font-weight:700;cursor:pointer}
-.err{background:#fef2f2;border:1px solid #fecaca;color:#991b1b;border-radius:10px;padding:10px;font-size:14px}table{border-collapse:collapse;width:100%;font-size:14px}td{padding:4px 0}td:first-child{color:#64748b}`;
-const page = (title: string, body: string) => `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${esc(title)}</title><style>${STYLE}</style></head><body><main>${body}</main></body></html>`;
-
 function form(p: ScorecardPayload, error: string | null, values: Record<string, string>): string {
   const scale = (name: string) => `<div class="stars">${[1, 2, 3, 4, 5].map((n) => `<label><input type="radio" name="${esc(name)}" value="${n}" ${values[name] === String(n) ? "checked" : ""} required><span>${n}</span></label>`).join("")}</div>`;
-  return page(`Scorecard: ${p.candidate}`, `<div class="card"><h1>Scorecard: ${esc(p.candidate)}</h1>
+  return reviewPage(`Scorecard: ${p.candidate}`, `<div class="rf-card rf-hero"><p class="rf-kicker">Interview scorecard</p><h1>${esc(p.candidate)}</h1>
 <p class="muted">${esc([p.round, p.role, p.when].filter(Boolean).join(" · "))}${p.panelName ? ` · for ${esc(p.panelName)}` : ""}</p>
-${error ? `<p class="err">${esc(error)}</p>` : ""}
+</div><div class="rf-card"><h2>Competency ratings</h2><p class="muted">Rate each skill from 1 (poor) to 5 (excellent).</p>
+${error ? `<p class="err" role="alert">${esc(error)}</p>` : ""}
 <form method="POST" action="">
-${SCORECARD_SKILLS.map((k, i) => `<div class="skill"><b>${esc(k)}</b> <span class="muted">1 = poor, 5 = excellent</span>${scale(`s${i}`)}</div>`).join("")}
-<div class="skill"><b>Overall</b>${scale("overall")}</div>
-<p><b>Recommendation</b><br>${(["proceed", "hold", "reject"] as const).map((r) => `<label class="opt"><input type="radio" name="recommendation" value="${r}" ${values.recommendation === r ? "checked" : ""} required>${RECOMMENDATION_LABELS[r]}</label>`).join("")}</p>
+${SCORECARD_SKILLS.map((k, i) => `<fieldset class="skill"><legend>${esc(k)}</legend>${scale(`s${i}`)}</fieldset>`).join("")}
+<fieldset class="skill"><legend>Overall rating</legend>${scale("overall")}</fieldset>
+<fieldset><legend>Recommendation</legend>${(["proceed", "hold", "reject"] as const).map((r) => `<label class="opt"><input type="radio" name="recommendation" value="${r}" ${values.recommendation === r ? "checked" : ""} required>${RECOMMENDATION_LABELS[r]}</label>`).join("")}</fieldset>
 <label class="muted" for="comments">Comments (required to reject)</label>
 <textarea id="comments" name="comments" maxlength="3000">${esc(values.comments ?? "")}</textarea>
-<button class="btn" type="submit">Submit my scorecard</button>
+<button class="rf-primary" type="submit">Submit my scorecard</button>
 </form><p class="muted">Your link only, and it works once. You see the other interviewers' ratings after you submit yours.</p></div>`);
 }
 
 function others(list: Scorecard[]): string {
-  if (!list.length) return `<div class="card"><p class="muted">No other interviewer has submitted yet.</p></div>`;
-  return list.map((c) => `<div class="card"><b>${esc(c.panelName ?? "Interviewer")}</b> · overall ${c.overall ?? "—"}/5 · ${esc(c.recommendation ? RECOMMENDATION_LABELS[c.recommendation] : "—")}
+  if (!list.length) return `<div class="rf-card"><p class="muted">No other interviewer has submitted yet.</p></div>`;
+  return list.map((c) => `<div class="rf-card"><b>${esc(c.panelName ?? "Interviewer")}</b> · overall ${c.overall ?? "—"}/5 · ${esc(c.recommendation ? RECOMMENDATION_LABELS[c.recommendation] : "—")}
 <table>${Object.entries(c.ratings).map(([k, v]) => `<tr><td>${esc(k)}</td><td>${esc(v)}/5</td></tr>`).join("")}</table>${c.comments ? `<p class="muted">“${esc(c.comments)}”</p>` : ""}</div>`).join("");
 }
 
@@ -83,7 +75,7 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
     const { others: rest } = await submitScorecard(admin, p.scorecardId, body);
     await revokeTokensForEntity(SCORECARD_ENTITY, p.scorecardId, claim.token.id);
     await recordTokenResult(claim.token.id, "ok", ip);
-    return html(page("Scorecard submitted", `<div class="card"><h1>Thank you. Your scorecard is in.</h1><p class="muted">The other interviewers' ratings for ${esc(p.candidate)}:</p></div>${others(rest)}`));
+    return html(reviewPage("Scorecard submitted", `<div class="rf-card"><h1>Thank you. Your scorecard is in.</h1><p class="muted">The other interviewers' ratings for ${esc(p.candidate)}:</p></div>${others(rest)}`));
   } catch (error) {
     const message = error instanceof CandidateActionError ? error.message : "Something went wrong.";
     await recordTokenResult(claim.token.id, message, ip);

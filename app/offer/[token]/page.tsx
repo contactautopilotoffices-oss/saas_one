@@ -2,6 +2,7 @@
 
 import React, { use, useEffect, useState } from 'react';
 import type { PublicOffer } from '@/backend/lib/candidates/hiring';
+import { PublicFormPage } from '@/frontend/components/recruitment/PublicFormPage';
 
 /**
  * A candidate's letter of intent: /offer/<token> (owner 2026-11-24). No sign-in; the link is the key. The letter, the
@@ -58,11 +59,11 @@ export default function OfferPage({ params }: { params: Promise<{ token: string 
     ) : null;
 
     return (
-        <main className="min-h-screen bg-slate-100 px-4 py-8 text-slate-900 sm:py-12">
-            <div className="mx-auto max-w-xl space-y-4">
-                {!page && !loadError && <p className="text-center text-sm text-slate-500">Loading your letter…</p>}
+        <PublicFormPage company={page?.companyName} title="Offer letter">
+            <div className="rf-stack">
+                {!page && !loadError && <p role="status" className="rf-status">Loading your letter…</p>}
                 {loadError && (
-                    <div className="rounded-2xl bg-white p-6 text-center shadow-sm">
+                    <div className="rf-status" role="alert">
                         <h1 className="text-lg font-bold">This letter is not open</h1>
                         <p className="mt-1 text-sm text-slate-600">{loadError}</p>
                     </div>
@@ -75,17 +76,21 @@ export default function OfferPage({ params }: { params: Promise<{ token: string 
                                 <p className="mt-1 text-sm">{page.status === 'accepted' ? `Welcome to ${page.companyName}. Our HR team will be in touch about your joining${page.joiningDate ? ` on ${page.joiningDate}` : ''}.` : 'Thank you for letting us know.'}</p>
                             </div>
                         )}
-                        <article className="space-y-4 rounded-2xl bg-white p-5 shadow-sm sm:p-7">
-                            <header>
-                                <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">{page.companyName}</p>
-                                <h1 className="mt-1 text-2xl font-bold leading-tight">Letter of intent{page.role ? `: ${page.role}` : ''}</h1>
-                                <p className="text-sm text-slate-600">{[page.location, `CTC ${page.ctc}`, page.joiningDate ? `Joining ${page.joiningDate}` : null].filter(Boolean).join(' · ')}</p>
+                        <article className="rf-column">
+                            <header className="rf-card rf-hero">
+                                {page.role && <p className="rf-kicker">Letter of intent</p>}
+                                <h1>{page.role || 'Letter of intent'}</h1>
+                                <dl className="rf-facts">
+                                    <div><dt>Cost to company</dt><dd>{page.ctc}</dd></div>
+                                    {page.location && <div><dt>Location</dt><dd>{page.location}</dd></div>}
+                                    {page.joiningDate && <div><dt>Joining date</dt><dd>{page.joiningDate}</dd></div>}
+                                </dl>
                             </header>
-                            <div className="whitespace-pre-wrap font-serif text-[15px] leading-relaxed text-slate-800">{page.letter}</div>
+                            <section className="rf-card"><h2>Your letter</h2><div className="rf-document">{page.letter.split(/\r?\n\s*\r?\n/).map((p, i) => <p className="whitespace-pre-wrap" key={i}>{p}</p>)}</div></section>
                             {(page.breakup.earnings.length > 0 || page.breakup.deductions.length > 0 || page.breakup.benefits.length > 0 || page.breakup.other.length > 0) && (
-                                <section>
+                                <section className="rf-card">
                                     <h2 className="text-base font-bold">Salary breakup</h2>
-                                    <table className="mt-1 w-full text-sm">
+                                    <table aria-label="Salary breakup" className="mt-1 w-full text-sm">
                                         {group('Earnings (per month)', page.breakup.earnings, ['Gross per month', page.breakup.gross])}
                                         {group('Deductions (per month)', page.breakup.deductions, ['Net per month (estimated)', page.breakup.net])}
                                         {group('Benefits (per year)', page.breakup.benefits)}
@@ -95,15 +100,18 @@ export default function OfferPage({ params }: { params: Promise<{ token: string 
                             )}
                         </article>
                         {page.status === 'open' && (
-                            <section className="space-y-3 rounded-2xl bg-white p-5 shadow-sm sm:p-7" aria-label="Your answer">
+                            <section className="rf-card space-y-3" aria-label="Your answer">
+                                <h2>Your response</h2>
                                 {!declining ? (
                                     <>
-                                        <label className="flex items-start gap-3 text-sm text-slate-700">
+                                        <label className="rf-consent flex items-start gap-3 text-sm">
                                             <input type="checkbox" checked={agree} onChange={e => setAgree(e.target.checked)} disabled={busy} className="mt-0.5 h-4 w-4 accent-slate-900" />
                                             <span>I have read the letter and the salary breakup, and I accept this offer.</span>
                                         </label>
-                                        <button type="button" disabled={busy || !agree} onClick={() => void answer('accepted')} className="w-full rounded-xl bg-slate-900 px-4 py-3 text-[15px] font-bold text-white disabled:opacity-50">{busy ? 'Saving…' : 'Accept the offer'}</button>
-                                        <button type="button" disabled={busy} onClick={() => { setDeclining(true); setError(null); }} className="w-full rounded-xl border border-slate-300 px-4 py-3 text-[15px] font-semibold text-slate-700">Decline</button>
+                                        <div className="flex flex-wrap gap-2">
+                                            <button type="button" disabled={busy || !agree} onClick={() => void answer('accepted')} className="rf-primary">{busy ? 'Saving…' : 'Accept the offer'}</button>
+                                            <button type="button" disabled={busy} onClick={() => { setDeclining(true); setError(null); }} className="rf-secondary">Decline</button>
+                                        </div>
                                     </>
                                 ) : (
                                     <>
@@ -120,6 +128,6 @@ export default function OfferPage({ params }: { params: Promise<{ token: string 
                     </>
                 )}
             </div>
-        </main>
+        </PublicFormPage>
     );
 }
