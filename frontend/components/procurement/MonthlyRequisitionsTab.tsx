@@ -7,14 +7,22 @@ import {
     Building2, Calendar, Search, RefreshCw, Loader2, AlertCircle,
     Plus, FileSpreadsheet, Eye, UserCheck, X, ShieldCheck,
     DollarSign, User as UserIcon, ArrowRight, Send, ShoppingCart, Truck, PackageCheck, FileCheck2, Trash2,
-    IndianRupee,
-    MessageSquare
+    IndianRupee, MessageSquare, Pencil
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import ModalPortal from '../ui/ModalPortal';
 import SiteRequisitionSheet from './SiteRequisitionSheet';
 import ApproverRequisitionModal from './ApproverRequisitionModal';
-import { siteVendorQuotation, siteEstimatedAmount, fileRevision, quoteBatchId, REPLACEABLE_STATUSES } from '@/backend/lib/procurement/requisition-approval.mjs';
+import {
+    siteVendorQuotation,
+    siteEstimatedAmount,
+    fileRevision,
+    quoteBatchId,
+    REPLACEABLE_STATUSES,
+    canSiteEditRequisition,
+    siteEditInfo,
+    formatEditDateTime,
+} from '@/backend/lib/procurement/requisition-approval.mjs';
 
 import PropertyBudgetManagerModal from './PropertyBudgetManagerModal';
 import BulkApproverUploadModal from './BulkApproverUploadModal';
@@ -58,6 +66,15 @@ interface MonthlyRequisition {
     vendor_quotation?: any;
     approver_info?: any;
     po_info?: any;
+    edit_info?: {
+        is_edited?: boolean;
+        edit_count?: number;
+        edited_by_id?: string | null;
+        edited_by_name?: string;
+        edited_at?: string | null;
+        previous_status?: string | null;
+    } | null;
+    edit_history?: any[];
     is_over_budget?: boolean;
     budget_limit?: number;
     over_budget_amount?: number;
@@ -116,8 +133,11 @@ export default function MonthlyRequisitionsTab({ user, organizationId, propertyI
         userRoleLower === 'master_admin';
 
     const canCreateRequisition = isPropertyAdmin || isSuperAdmin || isProcurementRole || properties.length > 0;
+    const isExternalRole = ['tenant', 'tenant_user', 'tenant_admin', 'super_tenant', 'client', 'resident', 'vendor', 'maintenance_vendor'].includes(userRoleLower);
+    const canEditAnyRequisition = Boolean(user?.id) && !isExternalRole;
 
     // Modals
+    const [editingRequisition, setEditingRequisition] = useState<MonthlyRequisition | null>(null);
     const [approverModalReq, setApproverModalReq] = useState<MonthlyRequisition | null>(null);
     const [vendorQuoteModalReq, setVendorQuoteModalReq] = useState<MonthlyRequisition | null>(null);
     const [issuePoModalReq, setIssuePoModalReq] = useState<MonthlyRequisition | null>(null);
@@ -522,22 +542,27 @@ export default function MonthlyRequisitionsTab({ user, organizationId, propertyI
         return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i];
     };
 
-    // If in Create Sheet mode, render the full-screen interactive dual-table sheet
+    // If in Create / Edit Sheet mode, render the full-screen interactive dual-table sheet
     if (viewMode === 'create_sheet') {
-        const effectivePropertyId = propertyId || (selectedPropertyFilter !== 'all' ? selectedPropertyFilter : properties[0]?.id);
-        const effectiveOrgId = organizationId || user?.user_metadata?.organization_id || (properties[0] as any)?.organization_id || '';
+        const effectivePropertyId = editingRequisition?.property_id || propertyId || (selectedPropertyFilter !== 'all' ? selectedPropertyFilter : properties[0]?.id);
+        const effectiveOrgId = editingRequisition?.organization_id || organizationId || user?.user_metadata?.organization_id || (properties[0] as any)?.organization_id || '';
         return (
             <SiteRequisitionSheet
-                key={`${user?.id}:${effectiveOrgId}`}
+                key={`${user?.id}:${effectiveOrgId}:${editingRequisition?.id || 'create'}`}
                 user={user}
                 organizationId={effectiveOrgId}
                 properties={properties}
                 initialPropertyId={effectivePropertyId}
+                editingRequisition={editingRequisition}
                 onSubmitted={() => {
+                    setEditingRequisition(null);
                     setViewMode('list');
                     fetchRequisitions();
                 }}
-                onCancel={() => setViewMode('list')}
+                onCancel={() => {
+                    setEditingRequisition(null);
+                    setViewMode('list');
+                }}
             />
         );
     }
@@ -551,6 +576,12 @@ export default function MonthlyRequisitionsTab({ user, organizationId, propertyI
                 requisition={approverModalReq}
                 allRequisitions={requisitions}
                 currentUser={user}
+                canEdit={canEditAnyRequisition}
+                onEdit={(reqToEdit) => {
+                    setApproverModalReq(null);
+                    setEditingRequisition(reqToEdit);
+                    setViewMode('create_sheet');
+                }}
                 onClose={() => setApproverModalReq(null)}
                 onStatusUpdated={() => {
                     fetchRequisitions();
@@ -668,7 +699,10 @@ export default function MonthlyRequisitionsTab({ user, organizationId, propertyI
 
                     {canCreateRequisition && (
                         <button
-                            onClick={() => setViewMode('create_sheet')}
+                            onClick={() => {
+                                setEditingRequisition(null);
+                                setViewMode('create_sheet');
+                            }}
                             className="h-9 px-4 inline-flex items-center gap-2 rounded-xl bg-primary hover:bg-primary/90 text-white font-black text-xs whitespace-nowrap transition-all shadow-md shadow-primary/20 hover:scale-[1.02] cursor-pointer shrink-0"
                         >
                             <Plus className="w-4 h-4 shrink-0" />
@@ -873,7 +907,10 @@ export default function MonthlyRequisitionsTab({ user, organizationId, propertyI
                         <div className="flex flex-wrap items-center justify-center gap-3">
                             {canCreateRequisition && (
                                 <button
-                                    onClick={() => setViewMode('create_sheet')}
+                                    onClick={() => {
+                                        setEditingRequisition(null);
+                                        setViewMode('create_sheet');
+                                    }}
                                     className="px-5 py-2.5 rounded-xl bg-primary hover:bg-primary/90 text-white font-extrabold text-xs shadow-md shadow-primary/20 transition-all flex items-center gap-2 cursor-pointer"
                                 >
                                     <Plus className="w-4 h-4" />
@@ -911,6 +948,8 @@ export default function MonthlyRequisitionsTab({ user, organizationId, propertyI
                                     const monthName = MONTH_NAMES[req.requisition_month - 1] || req.requisition_month;
                                     const itemsCount = req.total_items_count || req.items?.length || 0;
                                     const totalAmount = siteEstimatedAmount(req);
+                                    const editInfo = siteEditInfo(req);
+                                    const isEditableReq = canEditAnyRequisition && canSiteEditRequisition(req);
 
                                     return (
                                         <tr key={req.id} className="hover:bg-slate-50/80 dark:hover:bg-slate-700/30 transition-colors">
@@ -997,6 +1036,25 @@ export default function MonthlyRequisitionsTab({ user, organizationId, propertyI
                                                              req.status === 'pending_approval' ? 'Pending Approval' : req.status}
                                                         </span>
                                                     </span>
+                                                    {editInfo && (
+                                                        <div
+                                                            className="inline-flex flex-col items-start gap-0.5 px-2 py-1 rounded-lg bg-indigo-50 text-indigo-800 border border-indigo-200 dark:bg-indigo-950/50 dark:text-indigo-200 dark:border-indigo-800 text-[10px] leading-tight whitespace-normal max-w-[210px]"
+                                                            title={`Edited ${editInfo.edit_count > 1 ? `(${editInfo.edit_count} times) ` : ''}by ${editInfo.edited_by_name}${editInfo.edited_at ? ` on ${formatEditDateTime(editInfo.edited_at)}` : ''}`}
+                                                        >
+                                                            <span className="inline-flex items-center gap-1 font-black uppercase tracking-wider text-indigo-700 dark:text-indigo-300">
+                                                                <Pencil className="w-2.5 h-2.5 shrink-0" />
+                                                                Edited{editInfo.edit_count > 1 ? ` #${editInfo.edit_count}` : ''}
+                                                            </span>
+                                                            <span className="font-semibold text-slate-700 dark:text-slate-300">
+                                                                By {editInfo.edited_by_name}
+                                                            </span>
+                                                            {editInfo.edited_at && (
+                                                                <span className="text-slate-500 dark:text-slate-400 font-medium tabular-nums">
+                                                                    {formatEditDateTime(editInfo.edited_at)}
+                                                                </span>
+                                                            )}
+                                                        </div>
+                                                    )}
                                                     {req.status === 'pending_approval' && siteVendorQuotation(req)?.is_reapproval && (
                                                         <span
                                                             className="inline-flex items-center h-5 px-2 rounded-md text-[10px] font-black uppercase tracking-wider whitespace-nowrap bg-amber-100 text-amber-800 border border-amber-300 dark:bg-amber-950/60 dark:text-amber-300 dark:border-amber-800"
@@ -1045,6 +1103,22 @@ export default function MonthlyRequisitionsTab({ user, organizationId, propertyI
                                                         <Download className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400 shrink-0" />
                                                         <span>Download .xlsx</span>
                                                     </a>
+
+                                                    {/* Edit & Re-upload Uploaded Monthly Requisition */}
+                                                    {isEditableReq && (
+                                                        <button
+                                                            type="button"
+                                                            onClick={() => {
+                                                                setEditingRequisition(req);
+                                                                setViewMode('create_sheet');
+                                                            }}
+                                                            className="inline-flex items-center gap-1.5 h-8 px-3 rounded-xl border border-indigo-200 dark:border-indigo-800 bg-indigo-50 dark:bg-indigo-950/50 hover:bg-indigo-100 dark:hover:bg-indigo-900/60 text-indigo-700 dark:text-indigo-300 text-xs font-bold whitespace-nowrap transition-all shadow-2xs shrink-0 cursor-pointer"
+                                                            title="Edit this monthly requisition and re-upload updated sheet"
+                                                        >
+                                                            <Pencil className="w-3.5 h-3.5 shrink-0" />
+                                                            <span>Edit</span>
+                                                        </button>
+                                                    )}
 
                                                     {/* Procurement: Upload Vendor Quotation & Request Approval */}
                                                     {isProcurementRole && req.status === 'submitted' && (
