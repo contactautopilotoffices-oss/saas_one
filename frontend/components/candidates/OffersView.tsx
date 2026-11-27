@@ -60,14 +60,14 @@ export function CandidateOffers({ orgId, record, interviews }: { orgId: string; 
             {positions.map(([positionId, title]) => {
                 const cards = cardsFor(positionId);
                 const rounds = interviews.filter(i => i.positionId === positionId && i.status !== 'cancelled' && i.status !== 'no_show');
-                const eligible = rounds.length > 0 && rounds.every(i => i.status === 'done' && i.scorecards?.length && i.scorecards.every(c => c.submittedAt));
+                const eligible = rounds.length > 0 && rounds.every(i => i.status === 'done');
                 const avg = cards.length ? Math.round((cards.reduce((n, c) => n + (c.overall ?? 0), 0) / cards.length) * 10) / 10 : null;
                 const live = offers?.some(o => o.positionId === positionId && ['pending', 'approved', 'released', 'accepted'].includes(o.status));
                 return (
                     <div key={positionId} className={`${K_WELL} mt-2 px-3 py-2.5`}>
                         <p className="text-sm font-semibold text-text-primary">{title}</p>
                         <p className="text-xs text-text-secondary">{cards.length ? `Combined scorecard: ${avg}/5 over ${cards.length} card${cards.length === 1 ? '' : 's'} · ${cards.map(c => `${c.round ?? 'Round'}: ${c.recommendation ? RECOMMENDATION_LABELS[c.recommendation] : '—'}`).join(' · ')}` : 'No scorecard submitted yet.'}</p>
-                        {!live && !eligible && <p className="mt-2 text-sm text-text-secondary">Complete the interviews and collect all panel scorecards before making an offer.</p>}
+                        {!live && !eligible && <p className="mt-2 text-sm text-text-secondary">Complete the interviews before making an offer. Panel feedback is optional.</p>}
                         {!live && eligible && (form?.positionId === positionId ? (
                             <div className="mt-2 grid gap-2 sm:grid-cols-3">
                                 <label className="text-xs text-text-secondary">Offer CTC (lakhs per year)<input type="number" min={0} step={0.1} value={form.ctc} onChange={e => setForm({ ...form, ctc: e.target.value })} className={`${INPUT} mt-1`} autoFocus /></label>

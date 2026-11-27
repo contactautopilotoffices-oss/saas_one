@@ -138,6 +138,7 @@ export async function freshDb(options: { resumeSourcing?: boolean; resumeFields?
   if (options.resumeFields !== false && options.hiringFlow !== false) await db.exec(HIRING_FLOW_MIGRATION);
   if (options.resumeFields !== false && options.hiringFlow !== false && options.requisitionFollowups !== false) await db.exec(SCREENING_RSVP_MIGRATION);
   if (options.resumeFields !== false && options.hiringFlow !== false && options.requisitionFollowups !== false) await db.exec(ASSIGNMENT_LOI_AUDIT_MIGRATION + "\n" + readFileSync(path.join("supabase", "migrations", "20261126000001_recruitment_selection_gates.sql"), "utf8"));
+  if (options.resumeFields !== false && options.hiringFlow !== false && options.requisitionFollowups !== false) await db.exec(readFileSync(path.join("supabase", "migrations", "20261127000001_optional_interview_scorecards.sql"), "utf8"));
   if (options.resumeFields !== false && options.hiringFlow !== false && options.requisitionFollowups !== false) await db.exec(POSITION_SCREENING_MIGRATION);
   if (options.resumeFields !== false && options.stages !== false) await db.exec(STAGES_MIGRATION);
   if (options.resumeFields !== false && options.stages !== false && options.interviews !== false) await db.exec(INTERVIEWS_MIGRATION);

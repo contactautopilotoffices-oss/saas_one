@@ -25,6 +25,9 @@ export interface TranscriptLine { speaker: string | null; start: number; end: nu
 /** LiveVoice ID: what happened to voice naming for this meeting (null for meetings from before it existed) */
 export interface VoiceSummary { state: 'pending' | 'done' | 'skipped'; reason: string | null; matched: number; voices: number }
 
+/** Optional contact details for typed external guests (stored on online meetings). */
+export interface ExternalContact { name: string; phone?: string | null; email?: string | null }
+
 export interface MeetingDetail {
     id: string; title: string; meetingDate: string; status: MeetingStatus; error: string | null; confidential: boolean;
     durationSeconds: number | null; mine: boolean; createdAt: string;
@@ -39,7 +42,10 @@ export interface MeetingDetail {
     recording?: { missingPieces: number; missingSeconds: number; autoFinished: boolean; elapsedSeconds: number; segments: number } | null;
     /** Owner 2026-11-18: online meetings — the link, the call's times and problems (the video is never recorded) */
     kind?: MeetingKind; scheduledFor?: string | null;
-    online?: { joinPath: string; startedAt: string | null; endedAt: string | null; problem: string | null; joinedCount: number; guests?: GuestsView } | null;
+    online?: {
+        joinPath: string; startedAt: string | null; endedAt: string | null; problem: string | null; joinedCount: number; guests?: GuestsView;
+        externalContacts?: ExternalContact[]; linkSentAt?: string | null; linkSentCount?: number | null;
+    } | null;
     /** Owner 2026-11-19: false when "Find tasks in this meeting" was unticked */
     findTasks?: boolean;
 }

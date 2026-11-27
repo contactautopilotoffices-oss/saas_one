@@ -37,10 +37,15 @@ test('assessment buttons, meeting notes and hidden HR bot on desktop and phone',
           if (url.pathname === '/api/candidates/interviews') {
             const facts = Object.fromEntries(['currentInhand', 'expectedInhand', 'noticePeriodDays', 'location', 'reasonForChange'].map(key => [key, { value: null, quote: null, at: null }]));
             return Response.json({ interviews: [{
-              id: 'interview', meetingId: 'meeting', round: 'L1', at: '2026-11-22T10:00',
+              id: 'interview', meetingId: 'meeting', round: 'L1', at: '2026-11-22T10:00', status: 'done', followUpId: 'follow-up',
+              scorecards: [{ id: 'card', panelName: 'Alex', submittedAt: null, ratings: {} }],
               meeting: { status: 'ready', summary: { summary: 'Available after thirty days.', decisions: ['Proceed to L2.'], openQuestions: ['Confirm date.'] } },
               analysis: { id: 'analysis', status: 'done', appliedFacts: [], result: { summary: 'Clear answers on availability.', overallSentiment: 'positive', sentimentConfidence: 'high', interestLevel: 'high', concerns: [], redFlags: [], timeline: [], facts } },
             }] });
+          }
+          if (url.pathname === '/api/candidates/interviews/follow-up') {
+            window.sends.push(body);
+            return Response.json(body.action === 'copy' ? { url: 'https://app.test/score/card' } : { email: 'alex@example.test' });
           }
           if (url.pathname.endsWith('/meeting/join')) return Response.json({ success: true, meeting: { id: 'meeting', title: 'Interview: Asha', status: 'ready', purpose: 'interview', scheduledFor: null, confidential: false, hostName: 'HR', isHost: true, open: false, startedAt: null, problem: null }, setup: [] });
           if (url.pathname.includes('/task-manager/meetings/')) return Response.json({ success: true, meeting: {
@@ -78,6 +83,11 @@ test('assessment buttons, meeting notes and hidden HR bot on desktop and phone',
         assert.equal(await page.locator('[data-hr-policy-bot]').count(), 0);
       }
       await page.goto(`${base}/test-notes`);
+      await page.evaluate(() => Object.defineProperty(navigator, 'clipboard', { value: { writeText: async url => { window.copiedScorecard = url; } } }));
+      await page.getByRole('button', { name: 'Copy scorecard link' }).click();
+      await page.waitForFunction(() => window.copiedScorecard === 'https://app.test/score/card');
+      await page.getByRole('button', { name: 'Resend by email' }).click();
+      assert.deepEqual(await page.evaluate(() => window.sends.map(({ action, scorecardId }) => [action, scorecardId])), [['copy', 'card'], ['email', 'card']]);
       await page.getByText('Meeting notes', { exact: true }).click();
       await page.getByText('Proceed to L2.', { exact: true }).waitFor();
       await page.getByRole('button', { name: 'Read interview analysis' }).click();

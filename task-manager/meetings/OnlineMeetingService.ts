@@ -104,6 +104,15 @@ export class OnlineMeetingService {
         return null;
     }
 
+    /** Safely reads and patches `meeting_notes.online` under the row lock for scheduled/live meetings. */
+    static async patchOnline(id: string, fn: (online: OnlineState) => OnlineState): Promise<boolean> {
+        const res = await this.locked(id, async row => {
+            const online = fn({ room: roomNameFor(id), ...(row.online ?? {}) });
+            return { online, result: true };
+        });
+        return res === true;
+    }
+
     // ── joining ───────────────────────────────────────────────────────────────
 
     /** What the join page shows before anyone connects. */

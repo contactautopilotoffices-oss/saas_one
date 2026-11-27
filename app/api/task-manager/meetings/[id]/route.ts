@@ -23,7 +23,7 @@ export const maxDuration = 300;
  *     heartbeat   { segments, elapsedSeconds, pieceSeconds }  the phone's half-minute report while recording (2026-11-13)
  *     finish      { force? }                 recording done → processing starts; 409 PIECES_MISSING (with `details`)
  *                                            while pieces the phone reported have not arrived, unless force is true
- *     update_attendees { attendeeIds, extraNames }  change who is present, at any time (owner 2026-11-13)
+ *     update_attendees { attendeeIds, extraNames, extraContacts? }  change who is present, at any time (owner 2026-11-13)
  *     rewrite_notes                          a ready meeting: write the notes and draft tasks again from the kept
  *                                            transcript (after people were added); sent tasks stay
  *     discard                                delete the meeting (and any audio)
@@ -31,6 +31,7 @@ export const maxDuration = 300;
  *     retry                                  try a failed meeting again
  *     rename      { title }                  change the meeting's name
  *     send_notes                             summary + decisions + each person's tasks on WhatsApp to those present
+ *     send_link   { whatsapp, email }        send the online meeting link to picked attendees via WhatsApp and/or Email
  *     update_task { taskId, title?, note?, ownerUserIds?, dueDate?, dueTime? }
  *     add_task    { title, note?, ownerUserIds?, dueDate?, dueTime? }
  *     delete_task { taskId }
@@ -78,13 +79,17 @@ export async function POST(request: NextRequest, { params }: Ctx) {
             case 'upload_urls': return NextResponse.json({ success: true, ...(await MeetingService.uploadUrls(userId, id, { segment: body.segment, from: body.from, count: body.count, mimeType: body.mimeType })) });
             case 'heartbeat': return NextResponse.json({ success: true, ...(await MeetingService.heartbeat(userId, id, { segments: body.segments, elapsedSeconds: body.elapsedSeconds, pieceSeconds: body.pieceSeconds })) });
             case 'finish': return NextResponse.json({ success: true, ...(await MeetingService.finish(userId, id, { force: body.force })) });
-            case 'update_attendees': return NextResponse.json({ success: true, ...(await MeetingService.updateAttendees(userId, id, { attendeeIds: body.attendeeIds, extraNames: body.extraNames })) });
+            case 'update_attendees': return NextResponse.json({ success: true, ...(await MeetingService.updateAttendees(userId, id, { attendeeIds: body.attendeeIds, extraNames: body.extraNames, extraContacts: body.extraContacts })) });
             case 'rewrite_notes': return NextResponse.json({ success: true, ...(await MeetingService.rewriteNotes(userId, id)) });
             case 'discard': return NextResponse.json({ success: true, ...(await MeetingService.discard(userId, id)) });
             case 'reset_recording': return NextResponse.json({ success: true, ...(await MeetingService.resetRecording(userId, id)) });
             case 'retry': return NextResponse.json({ success: true, ...(await MeetingService.retry(userId, id)) });
             case 'rename': return NextResponse.json({ success: true, ...(await MeetingService.rename(userId, id, { title: body.title })) });
             case 'send_notes': return NextResponse.json({ success: true, ...(await MeetingService.sendNotes(userId, id)) });
+            case 'send_link': {
+                const origin = (process.env.NEXT_PUBLIC_APP_URL || process.env.APP_URL || new URL(request.url).origin).replace(/\/$/, '');
+                return NextResponse.json({ success: true, ...(await MeetingService.sendLink(userId, id, { whatsapp: body.whatsapp, email: body.email, origin })) });
+            }
             case 'update_task': return NextResponse.json({ success: true, ...(await MeetingService.updateTask(userId, id, pickTask(body, true))) });
             case 'add_task': return NextResponse.json({ success: true, ...(await MeetingService.addTask(userId, id, pickTask(body, false))) });
             case 'delete_task': return NextResponse.json({ success: true, ...(await MeetingService.deleteTask(userId, id, body.taskId)) });

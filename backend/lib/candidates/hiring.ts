@@ -114,7 +114,7 @@ export function defaultFlowDeps(): FlowDeps {
   return {
     async sendEmail(to, subject, html) {
       const { EmailService } = await import("@/backend/services/EmailService");
-      await EmailService.sendEmail({ to, subject, html });
+      if (!await EmailService.sendEmail({ to, subject, html })) throw new Error("Email delivery failed.");
     },
     async scorecardLink(orgId, card, payload) {
       if (!APP_URL) return null;
@@ -338,6 +338,30 @@ export async function getScorecard(client: SupabaseClient, id: string): Promise<
   return { ...toScorecard(data as Record<string, unknown>), organizationId: d.organization_id, panelUserId: d.panel_user_id };
 }
 
+export async function shareScorecard(client: SupabaseClient, orgId: string, id: unknown, action: unknown, deps: FlowDeps) {
+  if (typeof id !== "string" || !UUID.test(id) || (action !== "copy" && action !== "email")) throw new CandidateActionError(400, "Choose a scorecard and how to share it.");
+  const card = await getScorecard(client, id);
+  if (card.organizationId !== orgId) throw new CandidateActionError(404, "That scorecard is no longer there.");
+  if (card.submittedAt) throw new CandidateActionError(409, "This scorecard was already submitted.");
+  const row = await loadInterview(client, orgId, card.interviewId);
+  if (row.status === "cancelled" || row.status === "no_show") throw new CandidateActionError(409, "This interview did not take place.");
+  if (!card.panelUserId || !row.interviewer_ids.includes(card.panelUserId)) throw new CandidateActionError(409, "This interviewer is no longer assigned.");
+  const email = action === "email" ? (await emailsOf(client, [card.panelUserId])).get(card.panelUserId)?.email : null;
+  if (action === "email" && !email) throw new CandidateActionError(409, "This interviewer has no email address. Use Copy link instead.");
+  const ctx = await interviewContext(client, orgId, row);
+  const when = istText(new Date(row.at));
+  const expiresAt = new Date(Math.max(new Date(row.at).getTime(), (deps.now?.() ?? new Date()).getTime()) + 7 * DAY);
+  const link = await deps.scorecardLink(orgId, { id, userId: card.panelUserId, interviewId: row.id, expiresAt }, {
+    scorecardId: id, interviewId: row.id, candidate: ctx.candidate.name, role: ctx.role, round: row.round, when, panelName: card.panelName, designation: null,
+  });
+  if (!link) throw new CandidateActionError(503, "Could not create the scorecard link. Please try again.");
+  if (!email) return { url: link };
+  const sent = await send(deps, [email], `Interview scorecard: ${ctx.candidate.name} · ${row.round ?? "Interview"} · ${when}`,
+    mail(`Your interview feedback for ${ctx.candidate.name}`, [["Role", ctx.role ?? "—"], ["Interview", when]], { href: link, label: "Open your scorecard" }, "Feedback is optional. This link is personal to you."));
+  if (!sent) throw new CandidateActionError(502, "Could not send the scorecard email. Retry or copy the link.");
+  return { email };
+}
+
 const ScoreInput = z.object({
   ratings: z.record(z.string(), z.number().int().min(1).max(5)),
   overall: z.number().int().min(1, "Give the overall rating.").max(5),
@@ -355,8 +379,9 @@ export async function submitScorecard(client: SupabaseClient, id: string, body: 
   if (s.recommendation === "reject" && !s.comments) throw new CandidateActionError(400, "Comments are required to reject.");
   const card = await getScorecard(client, id);
   if (card.submittedAt) throw new CandidateActionError(409, "This scorecard was already submitted.");
-  const { error } = await client.from(CARDS).update({ ratings: s.ratings, overall: s.overall, recommendation: s.recommendation, comments: s.comments || null, submitted_at: now.toISOString() }).eq("id", id).is("submitted_at", null);
+  const { data: saved, error } = await client.from(CARDS).update({ ratings: s.ratings, overall: s.overall, recommendation: s.recommendation, comments: s.comments || null, submitted_at: now.toISOString() }).eq("id", id).is("submitted_at", null).select("id").maybeSingle();
   if (error) fail("save the scorecard", error);
+  if (!saved) throw new CandidateActionError(409, "This scorecard was already submitted.");
   const { data: row } = await client.from(INTERVIEWS).select("candidate_id, application_id, position_id, round").eq("id", card.interviewId).maybeSingle();
   if (row && card.panelUserId) {
     const r = row as { candidate_id: string; application_id: string | null; position_id: string | null; round: string | null };

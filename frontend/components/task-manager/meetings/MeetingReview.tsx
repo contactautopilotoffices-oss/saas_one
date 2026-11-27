@@ -2,7 +2,7 @@
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
-    AlertTriangle, ArrowLeft, AudioLines, Check, CheckCircle2, ChevronDown, Circle, CircleHelp, Copy, Download, FileText, Link2, Loader2, Lock, MessageCircle, Mic, NotebookText, Pencil, PhoneOff, Plus, RotateCcw, Send, Sparkles, Trash2, UserPlus, Video, X,
+    AlertTriangle, ArrowLeft, AudioLines, Check, CheckCircle2, ChevronDown, Circle, CircleHelp, Copy, Download, FileText, Link2, Loader2, Lock, Mail, MessageCircle, Mic, NotebookText, Pencil, PhoneOff, Plus, RotateCcw, Send, Sparkles, Trash2, UserPlus, Video, X,
 } from 'lucide-react';
 import {
     PROCESSING, STATUS_LABEL, call, clock, joinLink, meetingUrl, niceDate, niceDateTime, type MeetingDetail, type MeetingPerson, type MeetingStatus, type MeetingTask, type MeetingSpace, type SendAs,
@@ -61,6 +61,8 @@ export default function MeetingReview({ space, meetingId, people: peopleWithVoic
     const [editPeople, setEditPeople] = useState(false);
     /** After the people changed on a ready meeting: offer to write the notes again */
     const [rewriteOffer, setRewriteOffer] = useState(false);
+    const [sendLinkWa, setSendLinkWa] = useState(false);
+    const [sendLinkEmail, setSendLinkEmail] = useState(false);
     const saving = useRef(new Set<Promise<unknown>>());
     const alive = useRef(true);
 
@@ -199,7 +201,15 @@ export default function MeetingReview({ space, meetingId, people: peopleWithVoic
                 {/* Owner 2026-11-13: who was present can be changed here too (someone was forgotten, or joined late) */}
                 <div className="mt-3 flex flex-wrap items-center gap-1.5">
                     {m.attendees.map(a => <span key={a.id} className="rounded-full bg-zinc-100 px-2.5 py-1 text-[11px] font-bold text-zinc-700 dark:bg-zinc-800 dark:text-zinc-300">{a.name}</span>)}
-                    {m.extraNames.map(n => <span key={n} className="rounded-full border border-dashed border-zinc-300 px-2.5 py-1 text-[11px] font-bold text-zinc-500 dark:border-zinc-700">{n}</span>)}
+                    {m.extraNames.map(n => {
+                        const c = m.online?.externalContacts?.find(x => x.name.toLowerCase() === n.toLowerCase());
+                        const contact = [c?.phone, c?.email].filter(Boolean).join(' · ');
+                        return (
+                            <span key={n} title={contact || undefined} className="rounded-full border border-dashed border-zinc-300 px-2.5 py-1 text-[11px] font-bold text-zinc-500 dark:border-zinc-700">
+                                {n}{contact ? <span className="ml-1 font-normal text-zinc-400">({contact})</span> : null}
+                            </span>
+                        );
+                    })}
                     {m.attendees.length + m.extraNames.length === 0 && <span className="text-xs font-semibold text-zinc-500">Nobody marked as present.</span>}
                     {m.status !== 'discarded' && !PROCESSING.includes(m.status) && (
                         <button type="button" onClick={() => setEditPeople(true)} aria-label="Change who was present"
@@ -325,6 +335,55 @@ export default function MeetingReview({ space, meetingId, people: peopleWithVoic
                                         className="flex items-center gap-2 rounded-xl border border-zinc-300 px-4 py-2.5 text-sm font-bold text-zinc-700 hover:bg-red-50 hover:text-red-700 disabled:opacity-50 dark:border-zinc-700 dark:text-zinc-200 dark:hover:bg-red-950/40">
                                         {busy === 'end_call' ? <Loader2 className="h-4 w-4 animate-spin" /> : <PhoneOff className="h-4 w-4" />} {m.status === 'live' ? 'End for everyone' : 'Close meeting'}
                                     </button>
+                                )}
+                            </div>
+                            {/* Owner 2026-11-26: send the meeting link via selectable WhatsApp and/or Email checkboxes */}
+                            <div className="mt-4 flex flex-wrap items-center gap-x-4 gap-y-2 border-t border-zinc-100 pt-3.5 dark:border-zinc-800">
+                                <span className="text-[10px] font-black uppercase tracking-widest text-zinc-500">Send link</span>
+                                <label className="flex cursor-pointer items-center gap-1.5 text-xs font-bold text-zinc-700 dark:text-zinc-200">
+                                    <input type="checkbox" checked={sendLinkWa} onChange={e => setSendLinkWa(e.target.checked)} className="h-4 w-4 accent-indigo-600" />
+                                    <MessageCircle className="h-3.5 w-3.5 text-emerald-600" /> WhatsApp
+                                </label>
+                                <label className="flex cursor-pointer items-center gap-1.5 text-xs font-bold text-zinc-700 dark:text-zinc-200">
+                                    <input type="checkbox" checked={sendLinkEmail} onChange={e => setSendLinkEmail(e.target.checked)} className="h-4 w-4 accent-indigo-600" />
+                                    <Mail className="h-3.5 w-3.5 text-indigo-600" /> Email
+                                </label>
+                                <button type="button"
+                                    disabled={!!busy || (!sendLinkWa && !sendLinkEmail) || m.attendees.length + m.extraNames.length === 0}
+                                    title={m.attendees.length + m.extraNames.length === 0 ? 'Add people above ("Change") first' : (!sendLinkWa && !sendLinkEmail ? 'Tick WhatsApp, Email, or both' : undefined)}
+                                    onClick={() => {
+                                        if (m.online?.linkSentAt && !window.confirm('The meeting link was already sent — send it again?')) return;
+                                        void act('send_link', { action: 'send_link', whatsapp: sendLinkWa, email: sendLinkEmail }, r => {
+                                            const wa = r.whatsapp as { sent: number; failed: number; noContact: number } | undefined;
+                                            const em = r.email as { sent: number; failed: number; noContact: number } | undefined;
+                                            const parts: string[] = [];
+                                            if (wa) {
+                                                parts.push([
+                                                    wa.sent ? `WhatsApp sent to ${wa.sent}.` : 'WhatsApp: none sent.',
+                                                    wa.failed ? `${wa.failed} failed (is the "meeting_link_v1" template approved?).` : '',
+                                                    wa.noContact ? `${wa.noContact} without a phone number.` : '',
+                                                ].filter(Boolean).join(' '));
+                                            }
+                                            if (em) {
+                                                parts.push([
+                                                    em.sent ? `Email sent to ${em.sent}.` : 'Email: none sent.',
+                                                    em.failed ? `${em.failed} failed.` : '',
+                                                    em.noContact ? `${em.noContact} without an email.` : '',
+                                                ].filter(Boolean).join(' '));
+                                            }
+                                            setFlash(parts.join(' ') || 'Nothing to send.');
+                                        });
+                                    }}
+                                    className="flex items-center gap-1.5 rounded-xl bg-emerald-600 px-3.5 py-2 text-xs font-black text-white hover:bg-emerald-700 disabled:opacity-40">
+                                    {busy === 'send_link' ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Send className="h-3.5 w-3.5" />} Send link
+                                </button>
+                                {m.online.linkSentAt && (
+                                    <span className="text-[11px] font-semibold text-zinc-500">
+                                        Last sent {new Date(m.online.linkSentAt).toLocaleString('en-IN', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })} to {m.online.linkSentCount ?? 0}
+                                    </span>
+                                )}
+                                {m.attendees.length + m.extraNames.length === 0 && (
+                                    <span className="text-[11px] text-zinc-500">Click &ldquo;Change&rdquo; above to pick people first.</span>
                                 )}
                             </div>
                             {/* Stage 2: the people waiting to be let in (the one link above is for everyone) */}
@@ -508,7 +567,8 @@ export default function MeetingReview({ space, meetingId, people: peopleWithVoic
 
             {editPeople && (
                 <AttendeesEditor space={space} meetingId={meetingId} people={peopleWithVoice.length ? peopleWithVoice : data.people}
-                    current={{ attendees: m.attendees, extraNames: m.extraNames }}
+                    allowContacts={m.kind === 'online'}
+                    current={{ attendees: m.attendees, extraNames: m.extraNames, extraContacts: m.online?.externalContacts ?? [] }}
                     onClose={() => setEditPeople(false)}
                     onSaved={next => { setEditPeople(false); setRewriteOffer(next.canRewrite); void load(); }} />
             )}

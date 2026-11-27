@@ -88,6 +88,7 @@ export const EmailService = {
 
         if (!smtpUser || !smtpPass) {
             console.warn('[EmailService] Neither RESEND_API_KEY nor SMTP credentials found, skipping email send.');
+            recentlySentEmails.delete(dedupeKey);
             return false;
         }
         try {
@@ -101,6 +102,7 @@ export const EmailService = {
             return true;
         } catch (error) {
             console.error('[EmailService] Failed to send email via SMTP:', error);
+            recentlySentEmails.delete(dedupeKey);
             return false;
         }
     },

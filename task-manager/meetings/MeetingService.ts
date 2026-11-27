@@ -10,6 +10,8 @@ import { todayIST, isUuid } from '../WorkspaceService';
 import { buildPeople, extractMeeting, isClockTime, isRealDate, type MeetingSummary } from './MeetingExtractor';
 import { SPACE_DEPARTMENT, canSee, type MeetingSpace } from './visibility';
 import { MEETING_NOTES_CAMPAIGN, notesParams, notesPreview } from './meetingNotesMessage';
+import { MEETING_LINK_CAMPAIGN, linkEmailHtml, linkEmailSubject, linkParams, linkPreview, meetingWhenLabel } from './meetingLinkMessage';
+import { EmailService } from '@/backend/services/EmailService';
 import { TaskMessagingService } from '../TaskMessagingService';
 import {
     SARVAM_MAX_FILES, baseMime, checkSarvamJob, meetingAudioExtension, startSarvamJob, transcribeWithWhisper,
@@ -20,7 +22,7 @@ import { health as voiceHealth, identify as voiceIdentify, voiceIdConfig, VOICEP
 import { applyNames, segmentsFor, voiceLabels } from './MeetingSpeakers';
 import { mergeCapture, missingFromCapture, reportedSegments, type Capture } from './capture';
 import { OnlineMeetingService } from './OnlineMeetingService';
-import { meetingLinkPath, onlineSetupGaps, parseScheduledFor, roomNameFor, type MeetingKind, type OnlineState } from './online';
+import { meetingLinkPath, normalizeExternalContacts, onlineSetupGaps, parseScheduledFor, roomNameFor, type ExternalContact, type MeetingKind, type OnlineState } from './online';
 
 /**
  * Meeting Notes → Tasks (owner 2026-10-29). The Tech dashboard's "Meetings" tab.
@@ -300,6 +302,9 @@ export class MeetingService {
                 problem: m.online?.problem ?? null, joinedCount: m.online?.joined?.length ?? 0,
                 // Stage 2: the guest link and who asked to join through it (never a guest's own key)
                 guests: OnlineMeetingService.guestsView(m),
+                externalContacts: m.online?.externalContacts ?? [],
+                linkSentAt: m.online?.linkSentAt ?? null,
+                linkSentCount: m.online?.linkSentCount ?? null,
             } : null,
         };
     }
@@ -373,7 +378,7 @@ export class MeetingService {
      * Owner 2026-11-18: `kind` 'online' makes a video call with its own link instead of a phone recording; it may be
      * planned for later (`scheduledFor`, an ISO date-time). It starts as 'scheduled' and goes live when someone joins.
      */
-    static async create(userId: string, input: { title?: unknown; attendeeIds?: unknown; extraNames?: unknown; confidential?: unknown; kind?: unknown; scheduledFor?: unknown; findTasks?: unknown; purpose?: unknown }, space: MeetingSpace) {
+    static async create(userId: string, input: { title?: unknown; attendeeIds?: unknown; extraNames?: unknown; extraContacts?: unknown; confidential?: unknown; kind?: unknown; scheduledFor?: unknown; findTasks?: unknown; purpose?: unknown }, space: MeetingSpace) {
         const title = typeof input.title === 'string' ? input.title.replace(/\s+/g, ' ').trim() : '';
         if (title.length < 1 || title.length > 150) throw new MeetingError(400, 'Give the meeting a name (up to 150 characters).');
         const online = input.kind === 'online';
@@ -383,7 +388,7 @@ export class MeetingService {
             if (gaps.length) throw new MeetingError(503, `Online meetings are not set up yet. ${gaps.join(' ')}`, 'NOT_READY');
             try { scheduledFor = parseScheduledFor(input.scheduledFor); } catch (e) { throw new MeetingError(400, e instanceof Error ? e.message : 'The meeting time is not valid.'); }
         }
-        const { attendeeIds, extraNames } = await this.checkPeople(input);
+        const { attendeeIds, extraNames, externalContacts } = await this.checkPeople(input);
         // The meeting's date is the planned day (India time) when it is scheduled, else today
         const meetingDate = scheduledFor ? new Date(Date.parse(scheduledFor) + 330 * 60_000).toISOString().slice(0, 10) : todayIST();
         const id = randomUUID();
@@ -394,7 +399,7 @@ export class MeetingService {
             meeting_date: meetingDate, status: online ? 'scheduled' : 'recording', workspace: space,
             // Owner 2026-11-19: "Find tasks in this meeting" (ticked by default); kept in `llm`, which the notes step keeps
             ...(input.findTasks === false ? { llm: { findTasks: false } } : {}),
-            ...(online ? { kind: 'online', scheduled_for: scheduledFor, online: { room: roomNameFor(id), guestToken: linkSecret } satisfies OnlineState } : {}),
+            ...(online ? { kind: 'online', scheduled_for: scheduledFor, online: { room: roomNameFor(id), guestToken: linkSecret, ...(externalContacts.length ? { externalContacts } : {}) } satisfies OnlineState } : {}),
         };
         // Owner 2026-11-19: an interview made from Recruitment is not listed in the Meeting Assistant (`purpose`,
         // migration 20261119000002; before it, the meeting is made without it and shows in the list as before)
@@ -584,13 +589,22 @@ export class MeetingService {
     }
 
     /** The people picked for a meeting, checked the same way at creation and when changed later. */
-    private static async checkPeople(input: { attendeeIds?: unknown; extraNames?: unknown }) {
+    private static async checkPeople(
+        input: { attendeeIds?: unknown; extraNames?: unknown; extraContacts?: unknown },
+        existingContacts?: ExternalContact[],
+    ) {
         const wanted = Array.isArray(input.attendeeIds) ? input.attendeeIds.filter(isUuid) : [];
         const known = new Set((await this.people()).map(p => p.id));
         const attendeeIds = [...new Set(wanted.filter(id => known.has(id)))];
         const extraNames = [...new Set((Array.isArray(input.extraNames) ? input.extraNames : [])
             .map(n => (typeof n === 'string' ? n.replace(/\s+/g, ' ').trim() : '')).filter(n => n.length >= 1 && n.length <= 80))].slice(0, 30);
-        return { attendeeIds, extraNames };
+        let externalContacts: ExternalContact[] = [];
+        try {
+            externalContacts = normalizeExternalContacts(extraNames, input.extraContacts, existingContacts);
+        } catch (e) {
+            throw new MeetingError(400, e instanceof Error ? e.message : 'Check the external guest phone or email.');
+        }
+        return { attendeeIds, extraNames, externalContacts };
     }
 
     /**
@@ -598,16 +612,27 @@ export class MeetingService {
      * can open the meeting, like rename. While recording, the new names reach the speech service and the notes as
      * usual; after the notes exist, "rewrite_notes" writes them again with the new people.
      */
-    static async updateAttendees(userId: string, id: string, input: { attendeeIds?: unknown; extraNames?: unknown }) {
+    static async updateAttendees(userId: string, id: string, input: { attendeeIds?: unknown; extraNames?: unknown; extraContacts?: unknown }) {
         const m = await this.visible(userId, id);
-        const { attendeeIds, extraNames } = await this.checkPeople(input);
-        const { error } = await supabaseAdmin.from('meeting_notes').update({ attendee_ids: attendeeIds, extra_names: extraNames, updated_at: new Date().toISOString() }).eq('id', id);
+        const { attendeeIds, extraNames, externalContacts } = await this.checkPeople(input, m.online?.externalContacts);
+        const patch: Record<string, unknown> = { attendee_ids: attendeeIds, extra_names: extraNames, updated_at: new Date().toISOString() };
+        const { error } = await supabaseAdmin.from('meeting_notes').update(patch).eq('id', id);
         if (error) dbFail(error, 'Could not change who is present');
+        if (m.kind === 'online') {
+            const patched = (m.status === 'scheduled' || m.status === 'live')
+                ? await OnlineMeetingService.patchOnline(id, online => ({ ...online, externalContacts }))
+                : false;
+            if (!patched) {
+                await supabaseAdmin.from('meeting_notes')
+                    .update({ online: { room: roomNameFor(id), ...(m.online ?? {}), externalContacts }, updated_at: new Date().toISOString() })
+                    .eq('id', id);
+            }
+        }
         const added = attendeeIds.filter(a => !m.attendee_ids.includes(a)).length + extraNames.filter(n => !m.extra_names.includes(n)).length;
         const removed = m.attendee_ids.filter(a => !attendeeIds.includes(a)).length + m.extra_names.filter(n => !extraNames.includes(n)).length;
         await TaskDatabaseService.logAudit({ eventType: 'meeting_attendees_changed', actorId: userId, details: { meetingId: id, added, removed, people: attendeeIds.length + extraNames.length } });
         const nameOf = new Map((await this.people()).map(p => [p.id, p.name]));
-        return { attendees: attendeeIds.map(a => ({ id: a, name: nameOf.get(a) || 'Former employee' })), extraNames, canRewrite: m.status === 'ready' && !!m.transcript?.length };
+        return { attendees: attendeeIds.map(a => ({ id: a, name: nameOf.get(a) || 'Former employee' })), extraNames, externalContacts, canRewrite: m.status === 'ready' && !!m.transcript?.length };
     }
 
     /**
@@ -676,6 +701,132 @@ export class MeetingService {
         }
         await TaskDatabaseService.logAudit({ eventType: 'meeting_notes_sent', actorId: userId, details: { meetingId: id, sent, failed, noPhone } });
         return { sent, failed, noPhone };
+    }
+
+    /**
+     * Owner 2026-11-26: sends the online meeting join link via WhatsApp (Meta-approved AiSensy template) and/or Email
+     * to picked Task Manager attendees and any external guests with phone/email details.
+     */
+    static async sendLink(userId: string, id: string, input: { whatsapp?: unknown; email?: unknown; origin?: unknown }) {
+        const m = await this.visible(userId, id);
+        if (m.kind !== 'online') throw new MeetingError(409, 'Only online meetings have a link to send.');
+        if ((m.status !== 'scheduled' && m.status !== 'live') || m.online?.endedAt) {
+            throw new MeetingError(409, 'This meeting has already ended.');
+        }
+        const sendWa = input.whatsapp === true;
+        const sendEmail = input.email === true;
+        if (!sendWa && !sendEmail) throw new MeetingError(400, 'Tick WhatsApp, Email, or both to send the link.');
+
+        const totalRecipients = m.attendee_ids.length + m.extra_names.length;
+        if (!totalRecipients) throw new MeetingError(409, 'Nobody is picked for this meeting yet. Click Change to add people first.');
+
+        const origin = typeof input.origin === 'string' && /^https?:\/\//i.test(input.origin) ? input.origin.replace(/\/+$/, '') : '';
+        if (!origin) throw new MeetingError(500, 'Could not build the meeting link.');
+        const joinUrl = `${origin}${meetingLinkPath(m.id, m.online?.guestToken)}`;
+
+        const userIds = [...new Set([m.created_by, ...m.attendee_ids])];
+        const [{ data: userRows }, { data: profileRows }] = await Promise.all([
+            supabaseAdmin.from('users').select('id, full_name, email').in('id', userIds),
+            m.attendee_ids.length
+                ? supabaseAdmin.from('employee_profiles').select('user_id, email').in('user_id', m.attendee_ids)
+                : Promise.resolve({ data: [] }),
+        ]);
+        const userMap = new Map(((userRows ?? []) as Array<{ id: string; full_name: string | null; email: string | null }>).map(u => [u.id, u]));
+        const profileEmailMap = new Map(((profileRows ?? []) as Array<{ user_id: string; email: string | null }>).map(p => [p.user_id, p.email]));
+        const hostName = userMap.get(m.created_by)?.full_name || 'Your team';
+        const when = meetingWhenLabel(m.scheduled_for, m.meeting_date);
+
+        type Recipient = { key: string; name: string; phone: string | null; email: string | null; departmentId?: string; isExternal: boolean };
+        const recipients: Recipient[] = [];
+        for (const personId of m.attendee_ids) {
+            const person = await TaskDatabaseService.getEmployeeById(personId).catch(() => null);
+            const u = userMap.get(personId);
+            const active = person ? person.active : Boolean(u);
+            recipients.push({
+                key: `u:${personId}`,
+                name: person?.name || u?.full_name || 'Team member',
+                phone: active ? (person?.phone_number || null) : null,
+                email: active ? (u?.email || profileEmailMap.get(personId) || null) : null,
+                departmentId: person?.department_id || undefined,
+                isExternal: false,
+            });
+        }
+        const extMap = new Map((m.online?.externalContacts ?? []).map(c => [c.name.toLowerCase(), c]));
+        for (const extName of m.extra_names) {
+            const c = extMap.get(extName.toLowerCase());
+            recipients.push({
+                key: `x:${extName.toLowerCase()}`,
+                name: extName,
+                phone: c?.phone || null,
+                email: c?.email || null,
+                isExternal: true,
+            });
+        }
+
+        const wa = sendWa ? { sent: 0, failed: 0, noContact: 0 } : undefined;
+        const em = sendEmail ? { sent: 0, failed: 0, noContact: 0 } : undefined;
+        const seenPhones = new Set<string>();
+        const seenEmails = new Set<string>();
+        const reached = new Set<string>();
+
+        for (const r of recipients) {
+            if (wa) {
+                const digits = (r.phone ?? '').replace(/\D/g, '');
+                if (digits.length < 10) {
+                    wa.noContact++;
+                } else {
+                    const dedupePhone = digits.length === 10 ? `91${digits}` : digits;
+                    if (!seenPhones.has(dedupePhone)) {
+                        seenPhones.add(dedupePhone);
+                        const params = linkParams({ recipientName: r.name, meetingTitle: m.title, hostName, when, joinUrl });
+                        try {
+                            const ok = await TaskMessagingService.sendMessage(r.phone!, linkPreview(params), {
+                                messageType: 'meeting_link',
+                                departmentId: r.departmentId,
+                                campaignName: MEETING_LINK_CAMPAIGN,
+                                templateParams: params,
+                                templateOnly: true,
+                            });
+                            if (ok) { wa.sent++; reached.add(r.key); } else wa.failed++;
+                        } catch (err) {
+                            wa.failed++;
+                            console.error('[MeetingService] meeting link WhatsApp failed:', err instanceof Error ? err.message : err);
+                        }
+                    }
+                }
+            }
+
+            if (em) {
+                const addr = (r.email ?? '').trim().toLowerCase();
+                if (!addr || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(addr)) {
+                    em.noContact++;
+                } else if (!seenEmails.has(addr)) {
+                    seenEmails.add(addr);
+                    try {
+                        const ok = await EmailService.sendEmail({
+                            to: addr,
+                            subject: linkEmailSubject(m.title, when),
+                            html: linkEmailHtml({ recipientName: r.name, meetingTitle: m.title, hostName, when, joinUrl, isExternal: r.isExternal }),
+                        });
+                        if (ok) { em.sent++; reached.add(r.key); } else em.failed++;
+                    } catch (err) {
+                        em.failed++;
+                        console.error('[MeetingService] meeting link email failed:', err instanceof Error ? err.message : err);
+                    }
+                }
+            }
+        }
+
+        if (reached.size > 0) {
+            const stamp = new Date().toISOString();
+            await OnlineMeetingService.patchOnline(id, online => ({
+                ...online,
+                linkSentAt: stamp,
+                linkSentCount: reached.size,
+            }));
+        }
+        await TaskDatabaseService.logAudit({ eventType: 'meeting_link_sent', actorId: userId, details: { meetingId: id, whatsapp: wa, email: em, totalRecipients } });
+        return { whatsapp: wa, email: em, totalRecipients };
     }
 
     static async retry(userId: string, id: string) {
