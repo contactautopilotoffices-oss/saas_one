@@ -124,9 +124,9 @@ export async function POST(request: NextRequest) {
     }
 }
 
-export async function GET(request?: NextRequest) {
+export async function GET(request: NextRequest) {
     // Unauthenticated GET probes receive 401 + WWW-Authenticate so SSE/GET-first clients can discover OAuth.
-    if (request && !request.headers.get('authorization')) {
+    if (!request.headers.get('authorization')) {
         const origin = publicOrigin(request.url);
         if (origin) return unauthorized(origin, 'missing bearer token');
     }
