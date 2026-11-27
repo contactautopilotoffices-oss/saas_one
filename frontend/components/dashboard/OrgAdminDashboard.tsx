@@ -213,7 +213,7 @@ const OrgAdminDashboard = () => {
     const rawOrgRole = (scopedMembershipRole || userRole || membership?.org_role || '').toLowerCase();
     const isOpsSuperAdmin = rawOrgRole.includes('ops_super_admin') || rawOrgRole.includes('ops super admin');
     // Reports → App usage is for org super admins only (the API enforces the same rule).
-    const isOrgSuperAdmin = rawOrgRole.includes('org_super_admin');
+    const isOrgSuperAdmin = rawOrgRole.includes('org_super_admin') || rawOrgRole.includes('org super admin');
     // Owner 2026-10-29: the Super Admin's own Meeting Assistant. Kept mounted once opened, so switching tabs never stops a recording.
     const [assistantOpened, setAssistantOpened] = useState(false);
     if (activeTab === 'meeting_assistant' && isOrgSuperAdmin && !assistantOpened) setAssistantOpened(true);
@@ -907,8 +907,10 @@ const OrgAdminDashboard = () => {
         if (activeTab) {
             params.set('tab', activeTab);
         }
-        
-        router.replace(`${window.location.pathname}?${params.toString()}`, { scroll: false });
+
+        // Synchronous URL update prevents child replaceState effects (e.g. SOPDashboard) from snapping propertyId back to 'all'
+        const qs = params.toString();
+        window.history.replaceState(window.history.state, '', `${window.location.pathname}${qs ? `?${qs}` : ''}${window.location.hash}`);
     };
 
     const handleTabChange = (tab: Tab, filter: string = 'all', dateFrom?: string, dateTo?: string, procurementTab?: string) => {
@@ -1881,7 +1883,7 @@ const OrgAdminDashboard = () => {
                                                 isOpen={openDropdown === 'checklist'}
                                                 onToggle={() => setOpenDropdown(openDropdown === 'checklist' ? null : 'checklist')}
                                                 onSelect={(id) => {
-                                                    setChecklistPropertyId(id);
+                                                    handlePropertyChange(id);
                                                     setOpenDropdown(null);
                                                 }}
                                                 onClose={() => setOpenDropdown(null)}

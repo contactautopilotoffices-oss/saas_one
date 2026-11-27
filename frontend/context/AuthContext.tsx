@@ -126,11 +126,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
             const [orgData, propData, profileData] = await Promise.race([fetchPromise, timeoutPromise]) as any;
 
-            // Sort orgs to pick the "best" one for the primary context (admin roles first)
+            // Sort orgs to pick the "best" one for the primary context (aligned with useAppSession & login priority)
+            const priority: Record<string, number> = { 'org_super_admin': 0, 'ops_super_admin': 1, 'org_admin': 2, 'tech': 2, 'it': 2, 'design': 2, 'owner': 3, 'accounts': 4 };
             const sortedOrgs = [...(orgData || [])].sort((a, b) => {
-                const priority = { 'owner': 0, 'org_super_admin': 1, 'ops_super_admin': 2, 'org_admin': 3, 'tech': 3, 'it': 3, 'design': 3, 'accounts': 4 };
-                const aP = priority[a.role as keyof typeof priority] ?? 10;
-                const bP = priority[b.role as keyof typeof priority] ?? 10;
+                const aP = priority[(a.role || '').toLowerCase()] ?? 10;
+                const bP = priority[(b.role || '').toLowerCase()] ?? 10;
                 return aP - bP;
             });
 
