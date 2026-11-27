@@ -199,5 +199,5 @@ export function useRequisitionDraft({ userId, orgId, propertyId, ready, payload,
         } catch { console.warn('Submitted successfully; saved draft cleanup failed'); }
     }, [key, userId, orgId, propertyId]);
 
-    return { save, restore, reloadSaved, drafts, status, isSaving, isLoadingDraft: !!key && loadedKey !== key, clearAfterSubmit };
+    return { save, restore, reloadSaved, drafts, status, isSaving, isLoadingDraft: !!key && ready && loadedKey !== key, clearAfterSubmit };
 }

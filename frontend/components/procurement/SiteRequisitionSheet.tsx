@@ -591,7 +591,7 @@ export default function SiteRequisitionSheet({
     };
 
     return (
-        <fieldset disabled={isSubmitting || (!catalogError && (isLoadingItems || draft.isLoadingDraft))}
+        <fieldset disabled={isSubmitting || (!catalogError && (isLoadingItems || (!isEditMode && draft.isLoadingDraft)))}
             className="bg-slate-50 min-h-screen pb-20 min-w-0">
             <div className="bg-white border-b border-slate-200 sticky top-0 z-30 shadow-xs">
                 <div className="max-w-7xl mx-auto px-4 py-3 flex flex-wrap items-center justify-between gap-4">
@@ -979,20 +979,20 @@ export default function SiteRequisitionSheet({
                                     </th>
                                 </tr>
                                 <tr className="text-slate-900 font-black text-center select-none">
-                                    <th className="py-2 px-2 bg-slate-200 border border-slate-300 w-10">#</th>
-                                    <th className="py-2 px-3 bg-[#00a2ed] text-white border border-[#00a2ed] min-w-[170px]">Product Name/Type</th>
-                                    <th className="py-2 px-3 bg-[#48c774] text-slate-950 border border-[#48c774] min-w-[130px]">Specific Brand if any</th>
-                                    <th className="py-2 px-3 bg-[#ffeb3b] text-slate-950 border border-[#ffeb3b] min-w-[110px]">Color, Size</th>
-                                    <th className="py-2 px-1 bg-slate-100 border border-slate-300 min-w-[80px] w-20 text-slate-900">Qty</th>
+                                    <th className="py-2 px-2 bg-slate-200 border border-slate-300 w-9">#</th>
+                                    <th className="py-2 px-3 bg-[#00a2ed] text-white border border-[#00a2ed] min-w-[220px]">Product Name/Type</th>
+                                    <th className="py-2 px-2.5 bg-[#48c774] text-slate-950 border border-[#48c774] min-w-[100px]">Specific Brand if any</th>
+                                    <th className="py-2 px-2.5 bg-[#ffeb3b] text-slate-950 border border-[#ffeb3b] min-w-[95px]">Color, Size</th>
+                                    <th className="py-2 px-1 bg-slate-100 border border-slate-300 min-w-[68px] w-[68px] text-slate-900">Qty</th>
                                     <th className="py-2 px-2 bg-[#ffccbc] text-slate-950 border border-[#ffccbc] min-w-[55px] w-14">UOM</th>
-                                    <th className="py-2 px-2 bg-emerald-50 text-emerald-950 border border-slate-300 min-w-[80px] w-24">Site Price (₹)</th>
-                                    <th className="py-2 px-2 bg-slate-100 border-r-2 border-slate-300 w-10 text-slate-500">Del</th>
+                                    <th className="py-2 px-2 bg-emerald-50 text-emerald-950 border border-slate-300 min-w-[76px] w-20">Site Price (₹)</th>
+                                    <th className="py-2 px-2 bg-slate-100 border-r-2 border-slate-300 w-9 text-slate-500">Del</th>
 
-                                    <th className="py-2 px-2 bg-slate-200 border border-slate-300 w-10">#</th>
-                                    <th className="py-2 px-3 bg-[#00a2ed] text-white border border-[#00a2ed] min-w-[170px]">Product Name/Type</th>
-                                    <th className="py-2 px-3 bg-[#48c774] text-slate-950 border border-[#48c774] min-w-[130px]">Specific Brand if any</th>
-                                    <th className="py-2 px-3 bg-[#ffeb3b] text-slate-950 border border-[#ffeb3b] min-w-[110px]">Color, Size</th>
-                                    <th className="py-2 px-1 bg-slate-100 border border-slate-300 min-w-[80px] w-20 text-slate-900">Avail. Qty</th>
+                                    <th className="py-2 px-2 bg-slate-200 border border-slate-300 w-9">#</th>
+                                    <th className="py-2 px-3 bg-[#00a2ed] text-white border border-[#00a2ed] min-w-[200px]">Product Name/Type</th>
+                                    <th className="py-2 px-2.5 bg-[#48c774] text-slate-950 border border-[#48c774] min-w-[100px]">Specific Brand if any</th>
+                                    <th className="py-2 px-2.5 bg-[#ffeb3b] text-slate-950 border border-[#ffeb3b] min-w-[95px]">Color, Size</th>
+                                    <th className="py-2 px-1 bg-slate-100 border border-slate-300 min-w-[72px] w-[72px] text-slate-900">Avail. Qty</th>
                                     <th className="py-2 px-2 bg-[#ffccbc] text-slate-950 border border-[#ffccbc] min-w-[55px] w-14">UOM</th>
                                 </tr>
                             </thead>
@@ -1047,14 +1047,20 @@ export default function SiteRequisitionSheet({
                                         <td className="py-1 px-2 text-center text-slate-500 font-semibold border border-slate-200 bg-slate-50">
                                             {idx + 1}
                                         </td>
-                                        <td className="p-0 border border-slate-200 bg-[#00a2ed]/10">
-                                            <input
-                                                type="text"
-                                                value={row.name}
-                                                onChange={e => handleRowChange(row.id, 'name', e.target.value)}
-                                                className="w-full px-2.5 py-1.5 bg-transparent font-bold text-slate-900 focus:outline-hidden focus:bg-white"
-                                                placeholder="Item Name"
-                                            />
+                                        <td className="p-0 border border-slate-200 bg-[#00a2ed]/10 align-middle" title={row.name}>
+                                            {row.id.startsWith('row-') ? (
+                                                <input
+                                                    type="text"
+                                                    value={row.name}
+                                                    onChange={e => handleRowChange(row.id, 'name', e.target.value)}
+                                                    className="w-full min-w-[210px] px-2.5 py-1.5 bg-transparent font-bold text-slate-900 focus:outline-hidden focus:bg-white"
+                                                    placeholder="Item Name"
+                                                />
+                                            ) : (
+                                                <div className="px-2.5 py-1.5 font-bold text-slate-900 whitespace-normal break-words leading-snug">
+                                                    {row.name || '-'}
+                                                </div>
+                                            )}
                                         </td>
                                         <td className="p-0 border border-slate-200 bg-[#48c774]/10">
                                             <input
