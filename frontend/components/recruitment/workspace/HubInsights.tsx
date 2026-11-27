@@ -1,8 +1,9 @@
 'use client';
 
 import React from 'react';
+import HubBars from './HubBars';
 import type { RecruitmentDashboard } from '@/backend/lib/candidates/types';
-import { conversions, GLASS, H2, INK2, INK3, plural, stageFill, TONE, TRACK, type Tone } from './hub-ui';
+import { conversions, GLASS, H2, INK2, INK3, plural, stageFill, TRACK } from './hub-ui';
 
 /*
  * The Hub's Insights tab (owner 2026-11-25, design "21 · Hub"): how hiring is going. Where today's pipeline came from,
@@ -22,58 +23,45 @@ export default function HubInsights({ data }: { data: RecruitmentDashboard }) {
     const reasonMax = Math.max(1, ...(m?.rejectionReasons ?? []).map(r => r.count));
     const loadMax = Math.max(1, ...(m?.recruiterLoad ?? []).map(r => r.inPipeline));
 
-    const tiles: Array<{ value: string; label: string; note: string; tone: Tone }> = [
-        {
-            value: m?.timeToFill.days == null ? '—' : String(m.timeToFill.days),
-            label: 'Days to hire',
-            note: m?.timeToFill.days == null ? 'No accepted offer in this time' : `Average of ${plural(m.timeToFill.offers, 'offer', 'offers')}${avgTarget ? ` · target ${avgTarget}` : ''}`,
-            tone: m?.timeToFill.days != null && avgTarget && m.timeToFill.days > avgTarget ? 'c' : 'v',
-        },
-        {
-            value: m?.offerAcceptance.ratePct == null ? '—' : `${m.offerAcceptance.ratePct}%`,
-            label: 'Offers accepted',
-            note: m ? `${m.offerAcceptance.accepted} accepted · ${m.offerAcceptance.declined} declined · ${m.offerAcceptance.waiting} waiting` : 'Not available',
-            tone: 'p',
-        },
-        {
-            value: hours(m?.approvalTurnaround.requisitionHours ?? null),
-            label: 'Hiring request approval',
-            note: m ? `Submit to decision · ${plural(m.approvalTurnaround.requisitions, 'request', 'requests')}` : 'Not available',
-            tone: 'b',
-        },
-        {
-            value: hours(m?.approvalTurnaround.offerHours ?? null),
-            label: 'Offer approval',
-            note: m ? `Proposal to final approval · ${plural(m.approvalTurnaround.offers, 'offer', 'offers')}` : 'Not available',
-            tone: 'a',
-        },
-    ];
-
+    const interviewed = data.funnel.find(f => /interview/i.test(f.column))?.count;
+    const late = data.roles.filter(r => r.ageing).length;
+    const maxAge = Math.max(1, ...data.roles.map(r => Math.max(r.daysOpen, r.targetDays)));
+    const tiles = [
+        { value: data.activeCandidates, label: 'Active candidates', activity: data.activity?.candidateMoves, activityLabel: 'Current active applications by day of last stage change', note: `Across ${plural(data.roles.length, 'open role', 'open roles')}` },
+        { value: interviewed ?? '—', label: 'In interview stage', note: 'Current pipeline' },
+        { value: data.roles.length, label: 'Open roles', activity: data.activity?.openings, activityLabel: 'Current open roles created per day over the last seven days', note: `${late} past target` },
+    ] as const;
+    let angle = 0;
+    const ring: string[] = [];
+    for (const [i, source] of data.sources.entries()) {
+        const end = angle + source.count / sourceTotal * 360;
+        ring.push(`${stageFill(i)[0]} ${angle}deg ${end}deg`);
+        angle = end;
+    }
     return (
         <div className="flex flex-col gap-4">
-            <div role="group" aria-label="Key measures" className="grid grid-cols-1 gap-3.5 sm:grid-cols-2 xl:grid-cols-4">
+            <div role="group" aria-label="Key measures" className="grid grid-cols-1 gap-3 sm:grid-cols-3">
                 {tiles.map(t => (
                     <div key={t.label} className={`${GLASS} flex flex-col p-4`}>
-                        <span className={`self-start rounded-full px-3 py-1 font-display text-[28px] font-extrabold leading-tight tracking-[-0.03em] tabular-nums ${TONE[t.tone]}`}>{t.value}</span>
-                        <span className="mt-2.5 block font-extrabold">{t.label}</span>
+                        <span className="mb-2 block text-sm font-extrabold">{t.label}</span>
+                        <span className="flex items-end justify-between gap-2"><strong className="font-display text-4xl leading-tight tracking-tight tabular-nums">{t.value}</strong>{'activityLabel' in t && t.activityLabel && <HubBars values={t.activity} label={t.activityLabel} />}</span>
                         <span className={`block text-[13px] ${INK2}`}>{t.note}</span>
                     </div>
                 ))}
             </div>
-            {m && <p className={`-mt-1 mb-0 text-xs ${INK3}`}>These four are over the last {m.periodDays} days.</p>}
 
-            <div className="flex flex-wrap items-stretch gap-4">
+            <div className="grid gap-3 lg:grid-cols-3">
                 <section aria-label="Where candidates come from" className={`${GLASS} min-w-0 flex-[1_1_340px] p-[22px]`}>
                     <div className="mb-3 flex flex-wrap items-baseline gap-2.5">
                         <h2 className={`${H2} grow`}>Where candidates come from</h2>
                         <span className={`text-[13px] ${INK3}`}>{plural(sourceTotal, 'person', 'people')} in the open roles</span>
                     </div>
                     {sourceTotal === 0 ? <p className={`m-0 text-sm ${INK3}`}>Nobody is in a pipeline yet.</p> : (
-                        <>
-                            <div aria-hidden className="mb-4 flex h-3.5 overflow-hidden rounded-full">
-                                {data.sources.map((s, i) => <span key={s.source} style={{ flex: `${s.count} 1 0`, background: stageFill(i)[0] }} />)}
+                        <div className="flex flex-wrap items-center gap-4">
+                            <div aria-hidden className="grid size-28 shrink-0 place-items-center rounded-full" style={{ background: `conic-gradient(${ring})` }}>
+                                <div className="grid size-[76px] content-center rounded-full bg-surface text-center"><strong className="text-xl">{sourceTotal}</strong><span className={`text-[10px] ${INK3}`}>candidates</span></div>
                             </div>
-                            <ul className="m-0 flex list-none flex-col gap-2 p-0">
+                            <ul className="m-0 flex min-w-[130px] flex-1 list-none flex-col gap-2 p-0 text-xs">
                                 {data.sources.map((s, i) => (
                                     <li key={s.source} className="flex items-center gap-2.5">
                                         <span aria-hidden className="h-3 w-3 shrink-0 rounded" style={{ background: stageFill(i)[0] }} />
@@ -83,7 +71,7 @@ export default function HubInsights({ data }: { data: RecruitmentDashboard }) {
                                     </li>
                                 ))}
                             </ul>
-                        </>
+                        </div>
                     )}
                 </section>
 
@@ -101,10 +89,24 @@ export default function HubInsights({ data }: { data: RecruitmentDashboard }) {
                         </div>
                     )}
                 </section>
+                <section aria-label="Days to hire" className={`${GLASS} min-w-0 p-5`}>
+                    <h2 className={H2}>Days to hire</h2>
+                    <p className={`mb-3 text-xs ${INK3}`}>Days open against each role’s target{avgTarget ? ` · average target ${avgTarget} days` : ''}</p>
+                    {!data.roles.length && <p className={`text-sm ${INK3}`}>No open roles.</p>}
+                    {data.roles.slice(0, 5).map(role => <div key={role.id} className="mb-3">
+                        <div className="mb-1 flex justify-between gap-1 text-xs font-bold"><span>{role.title}</span><span className={`shrink-0 ${role.ageing ? 'text-error' : 'text-primary'}`}>{role.daysOpen}d / {role.targetDays}d</span></div>
+                        <div className={`relative h-2 rounded-full ${TRACK}`}>
+                            <div className={`h-full rounded-full ${role.ageing ? 'bg-red-500' : 'bg-indigo-600'}`} style={{ width: `${role.daysOpen / maxAge * 100}%` }} />
+                            <span aria-hidden className="absolute -top-0.5 h-3 w-px bg-current" style={{ left: `min(calc(100% - 1px), ${role.targetDays / maxAge * 100}%)` }} />
+                        </div>
+                    </div>)}
+                </section>
             </div>
 
-            {m && (
-                <div className="flex flex-wrap items-stretch gap-4">
+            {m && <details className={`${GLASS} px-5 py-3`}>
+                <summary className="cursor-pointer text-sm font-bold">More hiring metrics</summary>
+                <p className={`mt-3 text-sm ${INK2}`}>Last {m.periodDays} days · Average time to fill {m.timeToFill.days ?? '—'} days · Offer acceptance {m.offerAcceptance.ratePct == null ? '—' : `${m.offerAcceptance.ratePct}%`} · Request approval {hours(m.approvalTurnaround.requisitionHours)} · Offer approval {hours(m.approvalTurnaround.offerHours)}</p>
+                <div className="mt-3 flex flex-wrap items-stretch gap-4">
                     <section aria-label="Rejection reasons" className={`${GLASS} min-w-0 flex-[1_1_340px] p-[22px]`}>
                         <div className="mb-3 flex flex-wrap items-baseline gap-2.5"><h2 className={`${H2} grow`}>Why people were rejected</h2><span className={`text-[13px] ${INK3}`}>Last {m.periodDays} days</span></div>
                         {m.rejectionReasons.length === 0 ? <p className={`m-0 text-sm ${INK3}`}>No rejections in this time.</p> : (
@@ -138,7 +140,7 @@ export default function HubInsights({ data }: { data: RecruitmentDashboard }) {
                         <p className={`mb-0 mt-3 text-xs ${INK3}`}>The bar is the people in each recruiter&apos;s pipelines.</p>
                     </section>
                 </div>
-            )}
+            </details>}
         </div>
     );
 }

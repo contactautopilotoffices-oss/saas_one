@@ -125,6 +125,8 @@ describe("the hiring flow after booking", () => {
     await assert.rejects(shareScorecard(client, ORG, mine.id, "email", deps), /already submitted/);
     const second = await submitScorecard(client, theirs.id, { ratings, overall: 3, recommendation: "hold", comments: "Check references." });
     assert.deepEqual(second.others.map((c) => [c.overall, c.recommendation]), [[4, "proceed"]], "after submitting, the other card is visible");
+    const dashboard = await recruitmentDashboard(client, ORG, new Date("2026-11-24T00:00:00Z"), true);
+    assert.ok(dashboard.spotlight?.some(p => p.record.candidateId === farah.candidateId && p.member.score?.overall === 3.5));
     // Chasers only for cards still empty: none left here.
     assert.equal((await runInterviewJobs(client, ORG, { ...deps, now: () => new Date(istToInstant("2026-11-23T15:00").getTime() + 30 * 3_600_000) })).chasers, 0);
   });
@@ -163,6 +165,9 @@ describe("the hiring flow after booking", () => {
     await assert.rejects(recordResponse(client, ORG, ME, offer.id, { response: "declined" }), /reason/);
     const accepted = await recordResponse(client, ORG, ME, offer.id, { response: "accepted" });
     assert.deepEqual([accepted.status, accepted.joiningDate], ["accepted", "2026-12-15"]);
+    const dashboard = await recruitmentDashboard(client, ORG, NOW, true);
+    assert.ok(dashboard.offersInPlay?.some(o => o.id === offer.id && o.joiningDate === "2026-12-15"));
+    assert.ok(!dashboard.today.offersAwaiting.some(o => o.id === offer.id));
     const joined = await recordJoining(client, ORG, ME, offer.id, { outcome: "joined" }, deps);
     assert.equal(joined.status, "joined");
     assert.equal((await getPosition(client, ORG, positionId)).status, "closed", "its one opening is filled");
@@ -196,11 +201,15 @@ describe("the hiring flow after booking", () => {
   });
 
   it("counts the dashboard from the records", async () => {
-    const d = await recruitmentDashboard(client, ORG, NOW);
+    const d = await recruitmentDashboard(client, ORG, new Date("2026-11-24T00:00:00Z"), true);
     const role = d.roles.find((r) => r.id === positionId);
     assert.ok(role, "the open role is listed");
     assert.equal(d.funnel.reduce((n, f) => n + f.count + f.rejected, 0), 2, "both people are counted once");
     assert.ok(Array.isArray(d.today.interviews) && Array.isArray(d.today.offersAwaiting));
+    assert.equal(d.interviewWeek.length, 7);
+    assert.equal(d.interviewWeek.find(day => day.date === "2026-11-23")?.count, 1);
+    assert.equal(d.activeCandidates, new Set(d.spotlight?.map(p => p.record.candidateId)).size);
+
     // Owner 2026-11-25 (workspace Pipeline and Insights tabs): the role's people by column, and where they came from.
     assert.equal(role.byColumn.length, d.funnel.length, "one count per board column");
     assert.equal(role.byColumn.reduce((n, c) => n + c, 0), role.inPipeline, "the columns add up to the people in the running");

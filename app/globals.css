@@ -3950,13 +3950,13 @@ body:has([data-recruitment-workspace]) {
   --color-success: var(--success);
   --info: #737373;
   --color-info: var(--info);
-  --primary: #353535;
-  --primary-light: #737373;
-  --primary-dark: #292929;
-  --primary-rgb: 53, 53, 53;
-  --accent: #353535;
-  --accent-light: #737373;
-  --accent-dark: #292929;
+  --primary: #5145e4;
+  --primary-light: #7868f0;
+  --primary-dark: #4335c8;
+  --primary-rgb: 81, 69, 228;
+  --accent: #5145e4;
+  --accent-light: #7868f0;
+  --accent-dark: #4335c8;
   --background: #f7f7f5;
   --surface: #ffffff;
   --surface-elevated: #fafaf9;
@@ -3964,7 +3964,7 @@ body:has([data-recruitment-workspace]) {
   --border: #e5e5e3;
   --border-subtle: #f0f0ee;
   --muted: #f5f5f3;
-  --text-primary: #262626;
+  --text-primary: #17152e;
   --text-secondary: #575757;
   --text-tertiary: #737373;
   --text-muted: #737373;
@@ -3989,11 +3989,11 @@ body:has([data-recruitment-workspace]) {
   --color-text-tertiary: var(--text-tertiary);
 }
 .dark body:has([data-recruitment-workspace]) {
-  --primary: #d6c19d;
-  --primary-light: #e7d9c0;
-  --primary-dark: #e7d9c0;
-  --primary-rgb: 214, 193, 157;
-  --accent: #d6c19d;
+  --primary: #b6aaff;
+  --primary-light: #d8ceff;
+  --primary-dark: #d8ceff;
+  --primary-rgb: 182, 170, 255;
+  --accent: #b6aaff;
   --background: #171717;
   --surface: #222222;
   --surface-elevated: #2b2b2a;
@@ -4013,7 +4013,7 @@ body:has([data-recruitment-workspace]) {
 [data-recruitment-workspace] {
   background-image: none;
 }
-[data-recruitment-workspace] .recruitment-header { padding: 12px 0 16px; }
+[data-recruitment-workspace] .recruitment-header { padding: 0; }
 /* Match the reference despite the app's important heading weights in the base layer. */
 @layer base {
   [data-recruitment-workspace] :is(h1, h2, h3),
@@ -4107,7 +4107,7 @@ body:has([data-recruitment-workspace]) [role="dialog"] > div:first-of-type {
 [data-recruitment-screen="email"] .recruitment-inbox > div > div:first-child { background: var(--surface-elevated); }
 
 /* One accent family across the workspace, with color reserved for decisions and exceptions. */
-body:has([data-recruitment-workspace]) { --recruitment-gradient: #353535; }
+body:has([data-recruitment-workspace]) { --recruitment-gradient: linear-gradient(120deg, #5145e4, #4a38dd); }
 [data-recruitment-workspace] :is(.recruitment-primary, button.bg-primary, nav button[aria-current="page"]),
 body:has([data-recruitment-workspace]) [role="dialog"] .recruitment-primary { background: var(--recruitment-gradient); color: white; }
 [data-recruitment-workspace] .recruitment-hero {
@@ -4147,19 +4147,39 @@ body:has([data-recruitment-workspace]) [role="dialog"] .recruitment-primary { ba
   box-shadow: var(--w-shadow);
   backdrop-filter: blur(20px);
 }
-[data-recruitment-workspace] .halo-top { display: grid; gap: 20px; }
-@media(min-width:1100px) { [data-recruitment-workspace] .halo-top { grid-template-columns: minmax(0,1.65fr) minmax(340px,1fr); } }
-[data-recruitment-workspace] .halo-brief { min-height: 380px; border-radius: 32px; border-color: rgba(255,255,255,.95); }
+[data-recruitment-workspace] .halo-top { display: grid; gap: 12px; }
+@media(min-width:900px) { [data-recruitment-workspace] .halo-top { grid-template-columns: minmax(0,1.3fr) minmax(0,1fr); } }
+[data-recruitment-workspace] .halo-brief { min-height: 275px; border-radius: 32px; border-color: rgba(255,255,255,.95); }
 [data-recruitment-workspace] .halo-brief::before,
 [data-recruitment-workspace] .halo-brief::after { content: ''; position: absolute; pointer-events: none; width: 300px; height: 300px; border: 36px solid rgba(255,255,255,.2); border-radius: 50%; }
 [data-recruitment-workspace] .halo-brief::before { right: -100px; top: -130px; }
 [data-recruitment-workspace] .halo-brief::after { right: 20%; bottom: -270px; }
 [data-recruitment-workspace] .halo-brief > * { position: relative; z-index: 1; }
 [data-recruitment-workspace] .halo-brief-copy { font-size: clamp(1.5rem,1.875vw,2.65rem); line-height: 1.35; }
-[data-recruitment-workspace] .halo-brief-copy > span[class*="rounded"] { background: rgba(255,255,255,.72); color: #262626; }
+[data-recruitment-workspace] .halo-brief-copy > span[class*="rounded"] { box-decoration-break: clone; }
 [data-recruitment-workspace] .halo-person { border-radius: 30px; }
-[data-recruitment-workspace] .halo-metrics { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:12px; }
-@media(min-width:1100px) { [data-recruitment-workspace] .halo-metrics { grid-template-columns:repeat(4,minmax(0,1fr)); } }
-[data-recruitment-workspace] .halo-metric { display:flex; align-items:center; gap:14px; border-radius:999px; padding:12px; }
-[data-recruitment-workspace] .halo-metric strong { display:flex; flex-shrink:0; align-items:center; justify-content:center; width:52px; height:52px; border-radius:50%; background:var(--surface-elevated); color:var(--primary-dark); font-size:24px; }
-@media(max-width:639px) { [data-recruitment-workspace] .halo-brief { min-height:0; padding:24px; } [data-recruitment-workspace] .halo-metric { border-radius:24px; align-items:flex-start; flex-direction:column; } }
+
+
+[data-recruitment-workspace] {
+  background-image: radial-gradient(ellipse at 70% 0%, #7569f20d, transparent 58%), radial-gradient(ellipse at 40% 100%, #9faaff18, transparent 65%);
+}
+[data-recruitment-workspace] .hub-split { display: grid; gap: 12px; grid-template-columns: minmax(0, 1fr); }
+@media (min-width: 900px) {
+  [data-recruitment-workspace] .hub-split { grid-template-columns: minmax(0, 1.6fr) minmax(0, 1fr); }
+}
+[data-recruitment-workspace] .hub-bubbles {
+  background: radial-gradient(ellipse at center, #7868f022, transparent 68%);
+}
+[data-recruitment-workspace] .hub-bubble { box-shadow: 0 6px 17px #5145e43b; transition: transform 180ms ease, box-shadow 180ms ease; }
+[data-recruitment-workspace] .hub-bubble[aria-pressed="true"] { outline: 2px solid var(--primary); outline-offset: 3px; }
+[data-recruitment-workspace] .hub-interview-hero {
+  background: linear-gradient(112deg, #4236bc, #5145d9 62%, #793ae6);
+  box-shadow: 0 12px 28px #5145e433;
+}
+[data-recruitment-workspace] .hub-tile { transition: transform 180ms ease, box-shadow 180ms ease; }
+[data-recruitment-workspace] .hub-tile:hover { box-shadow: 0 14px 34px #5145e429; }
+@media (prefers-reduced-motion: no-preference) {
+  [data-recruitment-workspace] [id^="hub-panel-"] { animation: recruitment-enter 220ms ease-out; }
+  [data-recruitment-workspace] :is(.hub-bubble, .hub-tile):hover { transform: translateY(-3px); }
+  @keyframes recruitment-enter { from { opacity: .55; transform: translateY(5px); } to { opacity: 1; transform: translateY(0); } }
+}

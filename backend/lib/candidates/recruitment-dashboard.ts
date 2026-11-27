@@ -11,18 +11,19 @@
  */
 import type { SupabaseClient } from "@supabase/supabase-js";
 
-import { listPositions } from "./positions";
+import { listPositions, memberScores } from "./positions";
 import { boardColumns, findStage } from "./stage-list";
 import { loadStages } from "./stages";
-import { CandidateActionError } from "./records";
-import type { CalendarInterview, InterviewStatus, OfferStatus, RecruitmentDashboard, RecruitmentMetrics } from "./types";
+import { CandidateActionError, getRecordRows, toRecord } from "./records";
+import type { CalendarInterview, InterviewStatus, OfferStatus, RecruitmentDashboard, RecruitmentMetrics, Stage } from "./types";
 
 const DAY = 86_400_000;
 
-export async function recruitmentDashboard(client: SupabaseClient, orgId: string, now = new Date()): Promise<RecruitmentDashboard> {
+export async function recruitmentDashboard(client: SupabaseClient, orgId: string, now = new Date(), includeSpotlight = false): Promise<RecruitmentDashboard> {
   const [{ stages }, positions] = await Promise.all([loadStages(client, orgId), listPositions(client, orgId, "open")]);
   const columns = boardColumns(stages, () => true);
   const columnOf = new Map(columns.flatMap((c, i) => c.stages.map((s) => [s.key, i] as const)));
+  const byId = new Map(positions.map(p => [p.id, p]));
   const titleOf = new Map(positions.map((p) => [p.id, p.title]));
   const positionIds = positions.map((p) => p.id);
 
@@ -30,26 +31,34 @@ export async function recruitmentDashboard(client: SupabaseClient, orgId: string
   const ist = new Date(now.getTime() + 5.5 * 3_600_000);
   const start = new Date(Date.UTC(ist.getUTCFullYear(), ist.getUTCMonth(), ist.getUTCDate()) - 5.5 * 3_600_000);
   const end = new Date(start.getTime() + DAY);
+  const weekStart = start.getTime() - ((ist.getUTCDay() + 6) % 7) * DAY;
 
   const [ivs, cards, members, offers] = await Promise.all([
-    client.from("recruitment_interviews").select("id, candidate_id, position_id, round, at, mode, status").eq("organization_id", orgId).gte("at", start.toISOString()).lt("at", end.toISOString()).neq("status", "cancelled").order("at"),
+    client.from("recruitment_interviews").select("id, candidate_id, position_id, round, at, mode, status").eq("organization_id", orgId).gte("at", new Date(weekStart).toISOString()).lt("at", new Date(weekStart + 7 * DAY).toISOString()).neq("status", "cancelled").order("at"),
     client.from("recruitment_scorecards").select("interview_id, panel_name").eq("organization_id", orgId).is("submitted_at", null).limit(500),
-    positionIds.length ? client.from("candidate_position_members").select("candidate_id, position_id, stage, stage_changed_at").eq("organization_id", orgId).in("position_id", positionIds).is("deleted_at", null) : Promise.resolve({ data: [], error: null }),
-    client.from("recruitment_offers").select("id, candidate_id, position_id, status, level_entered_at, released_at").eq("organization_id", orgId).in("status", ["pending", "released"]),
+    positionIds.length ? client.from("candidate_position_members").select("id, candidate_id, position_id, application_id, stage, stage_changed_at, added_at, remark").eq("organization_id", orgId).in("position_id", positionIds).is("deleted_at", null) : Promise.resolve({ data: [], error: null }),
+    client.from("recruitment_offers").select("id, candidate_id, position_id, status, level_entered_at, released_at, created_at, joining_date").eq("organization_id", orgId).in("status", includeSpotlight ? ["pending", "released", "accepted"] : ["pending", "released"]).order("created_at", { ascending: false }),
   ]);
-  const memberRows = (members.data ?? []) as { candidate_id: string; position_id: string; stage: string; stage_changed_at: string }[];
+  if (members.error) throw members.error;
+  const memberRows = (members.data ?? []) as { id: string; candidate_id: string; position_id: string; application_id: string | null; stage: Stage; stage_changed_at: string; added_at: string; remark: string | null }[];
   const cardRows = (cards.error ? [] : cards.data ?? []) as { interview_id: string; panel_name: string | null }[];
   const cardInterviews = cardRows.length
-    ? ((await client.from("recruitment_interviews").select("id, candidate_id, round, at, status").in("id", [...new Set(cardRows.map((c) => c.interview_id))]).lt("at", now.toISOString())).data ?? []) as { id: string; candidate_id: string; round: string | null; at: string; status: InterviewStatus }[]
+    ? ((await client.from("recruitment_interviews").select("id, candidate_id, round, at, status").eq("organization_id", orgId).in("id", [...new Set(cardRows.map((c) => c.interview_id))]).lt("at", now.toISOString())).data ?? []) as { id: string; candidate_id: string; round: string | null; at: string; status: InterviewStatus }[]
     : [];
-  const ivRows = (ivs.error ? [] : ivs.data ?? []) as { id: string; candidate_id: string; position_id: string | null; round: string | null; at: string; mode: string | null; status: InterviewStatus }[];
-  const offerRows = (offers.error ? [] : offers.data ?? []) as { id: string; candidate_id: string; position_id: string | null; status: OfferStatus; level_entered_at: string | null; released_at: string | null }[];
+  const weekRows = (ivs.error ? [] : ivs.data ?? []) as { id: string; candidate_id: string; position_id: string | null; round: string | null; at: string; mode: string | null; status: InterviewStatus }[];
+  const ivRows = weekRows.filter(iv => { const at = Date.parse(iv.at); return at >= start.getTime() && at < end.getTime(); });
+  const interviewWeek = Array.from({ length: 7 }, (_, i) => {
+    const day = weekStart + i * DAY;
+    return { date: new Date(day + 5.5 * 3_600_000).toISOString().slice(0, 10), count: weekRows.filter(iv => Math.floor((Date.parse(iv.at) - day) / DAY) === 0).length };
+  });
+  const offersInPlay = (offers.error ? [] : offers.data ?? []) as { id: string; candidate_id: string; position_id: string | null; status: OfferStatus; level_entered_at: string | null; released_at: string | null; created_at: string; joining_date: string | null }[];
+  const offerRows = offersInPlay.filter(o => o.status !== "accepted");
   const early = memberRows.filter((m) => {
     const s = findStage(stages, m.stage);
     return s?.kind === "progress" && (columnOf.get(m.stage) ?? 99) < 2 && now.getTime() - new Date(m.stage_changed_at).getTime() > 2 * DAY;
   });
 
-  const ids = [...new Set([...ivRows.map((r) => r.candidate_id), ...cardInterviews.map((r) => r.candidate_id), ...early.map((m) => m.candidate_id), ...offerRows.map((o) => o.candidate_id)])];
+  const ids = [...new Set([...ivRows.map((r) => r.candidate_id), ...cardInterviews.map((r) => r.candidate_id), ...early.map((m) => m.candidate_id), ...offersInPlay.map((o) => o.candidate_id)])];
   const names = new Map<string, string>();
   for (let i = 0; i < ids.length; i += 200) {
     const { data } = await client.from("candidates").select("id, full_name").in("id", ids.slice(i, i + 200));
@@ -57,10 +66,50 @@ export async function recruitmentDashboard(client: SupabaseClient, orgId: string
   }
   const name = (id: string) => names.get(id) ?? "Candidate";
   const days = (v: string | null) => (v ? Math.max(0, Math.floor((now.getTime() - new Date(v).getTime()) / DAY)) : 0);
+  const summarizeOffer = (o: typeof offerRows[number]) => ({
+    id: o.id, candidateName: name(o.candidate_id), positionTitle: o.position_id ? titleOf.get(o.position_id) ?? null : null,
+    status: o.status, days: days(o.status === "pending" ? o.level_entered_at : o.released_at),
+  });
   const pastInterview = new Map(cardInterviews.filter((r) => r.status !== "cancelled" && r.status !== "no_show").map((r) => [r.id, r]));
 
   const inPipeline = (positionId: string) => memberRows.filter((m) => m.position_id === positionId && findStage(stages, m.stage)?.kind !== "rejected").length;
   const isRejected = (stage: string) => findStage(stages, stage)?.kind === "rejected";
+  const active = memberRows.filter(m => findStage(stages, m.stage)?.kind === "progress");
+  const recentDays = (dates: string[]) => {
+    const buckets = new Array<number>(7).fill(0);
+    for (const date of dates) {
+      const i = Math.floor((+new Date(date) - start.getTime()) / DAY) + 6;
+      if (i >= 0 && i < buckets.length) buckets[i]++;
+    }
+    return buckets;
+  };
+  let spotlight: RecruitmentDashboard["spotlight"];
+  if (includeSpotlight) {
+    // shortcut: show 12 recent applications, add paginated scoring if the hub needs a full ranking.
+    const recent = active.filter(m => m.application_id).sort((a, b) => +new Date(b.stage_changed_at) - +new Date(a.stage_changed_at) || a.candidate_id.localeCompare(b.candidate_id));
+    const seen = new Set<string>();
+    const selected = recent.filter(m => {
+      if (seen.has(m.candidate_id)) return false;
+      seen.add(m.candidate_id);
+      return true;
+    }).slice(0, 12);
+    const [records, ...scores] = await Promise.all([
+      getRecordRows(client, orgId, selected.map(m => m.application_id!)),
+      ...[...new Set(selected.map(m => m.position_id))].map(async positionId => [positionId, await memberScores(client, orgId, positionId, selected.filter(m => m.position_id === positionId).map(m => m.candidate_id))] as const),
+    ]);
+    const byPosition = new Map(scores);
+    const byApplication = new Map(records.filter(r => !r.deleted_at).map(r => [r.id, toRecord(r)]));
+    spotlight = selected.flatMap(m => {
+      const record = byApplication.get(m.application_id!);
+      const position = byId.get(m.position_id);
+      if (!record || !position) return [];
+      const score = byPosition.get(m.position_id)?.get(m.candidate_id) ?? null;
+      return [{ record, position, column: columns[columnOf.get(m.stage) ?? -1]?.name ?? m.stage, member: {
+        id: m.id, positionId: m.position_id, candidateId: m.candidate_id, applicationId: m.application_id, stage: m.stage,
+        stageChangedAt: m.stage_changed_at, stageChangedByName: null, addedAt: m.added_at, remark: m.remark, record: null, score,
+      } }];
+    }).sort((a, b) => (b.member.score?.overall ?? -1) - (a.member.score?.overall ?? -1));
+  }
   const roles = positions.map((p) => {
     const n = inPipeline(p.id);
     const ageing = p.daysOpen > p.targetDays;
@@ -87,6 +136,15 @@ export async function recruitmentDashboard(client: SupabaseClient, orgId: string
   });
 
   return {
+    activeCandidates: new Set(active.map(m => m.candidate_id)).size,
+    interviewWeek,
+    activity: includeSpotlight ? {
+      openings: recentDays(positions.map(p => p.createdAt)),
+      candidateMoves: recentDays(active.map(m => m.stage_changed_at)),
+      offers: recentDays(offerRows.map(o => o.created_at)),
+    } : undefined,
+    spotlight,
+    offersInPlay: includeSpotlight ? offersInPlay.map(o => ({ ...summarizeOffer(o), joiningDate: o.joining_date ? new Date(o.joining_date).toISOString().slice(0, 10) : null })) : undefined,
     metrics,
     today: {
       interviews: ivRows.map((r) => ({ id: r.id, candidateName: name(r.candidate_id), round: r.round, positionTitle: r.position_id ? titleOf.get(r.position_id) ?? null : null, at: r.at, mode: r.mode, status: r.status })),
@@ -95,7 +153,7 @@ export async function recruitmentDashboard(client: SupabaseClient, orgId: string
         return { interviewId: c.interview_id, candidateName: name(r.candidate_id), panelName: c.panel_name, round: r.round, at: r.at };
       }),
       waiting: early.map((m) => ({ candidateName: name(m.candidate_id), positionTitle: titleOf.get(m.position_id) ?? "—", stageName: findStage(stages, m.stage)?.name ?? m.stage, days: days(m.stage_changed_at) })).sort((a, b) => b.days - a.days),
-      offersAwaiting: offerRows.map((o) => ({ id: o.id, candidateName: name(o.candidate_id), positionTitle: o.position_id ? titleOf.get(o.position_id) ?? null : null, status: o.status, days: days(o.status === "released" ? o.released_at : o.level_entered_at) })),
+      offersAwaiting: offerRows.map(summarizeOffer),
     },
     roles,
     funnel,
@@ -112,10 +170,10 @@ export const CALENDAR_MAX_DAYS = 42;
  */
 export async function interviewsBetween(client: SupabaseClient, orgId: string, from: Date, to: Date): Promise<CalendarInterview[]> {
   if (!(to > from) || to.getTime() - from.getTime() > CALENDAR_MAX_DAYS * DAY) throw new CandidateActionError(400, `Ask for up to ${CALENDAR_MAX_DAYS} days at a time.`);
-  const { data, error } = await client.from("recruitment_interviews").select("id, candidate_id, position_id, round, at, mode, venue, status")
+  const { data, error } = await client.from("recruitment_interviews").select("id, candidate_id, application_id, position_id, round, at, mode, venue, status, join_path")
     .eq("organization_id", orgId).gte("at", from.toISOString()).lt("at", to.toISOString()).neq("status", "cancelled").order("at").limit(1000);
   if (error) throw error;
-  const rows = (data ?? []) as { id: string; candidate_id: string; position_id: string | null; round: string | null; at: string; mode: string | null; venue: string | null; status: InterviewStatus }[];
+  const rows = (data ?? []) as { id: string; candidate_id: string; application_id: string | null; position_id: string | null; round: string | null; at: string; mode: string | null; venue: string | null; status: InterviewStatus; join_path: string | null }[];
   if (!rows.length) return [];
   const candidateIds = [...new Set(rows.map((r) => r.candidate_id))];
   const positionIds = [...new Set(rows.map((r) => r.position_id).filter((id): id is string => !!id))];
@@ -134,7 +192,7 @@ export async function interviewsBetween(client: SupabaseClient, orgId: string, f
     if (c.panel_name) panel.set(c.interview_id, [...(panel.get(c.interview_id) ?? []), c.panel_name]);
   }
   return rows.map((r) => ({
-    id: r.id, candidateId: r.candidate_id, candidateName: names.get(r.candidate_id) ?? "Candidate",
+    id: r.id, candidateId: r.candidate_id, applicationId: r.application_id, joinPath: /^\/(?:meet\/[a-f0-9-]{36}|guest\/[\w-]{32})$/i.test(r.join_path ?? "") ? r.join_path : null, candidateName: names.get(r.candidate_id) ?? "Candidate",
     positionTitle: r.position_id ? titles.get(r.position_id) ?? null : null, round: r.round, at: new Date(r.at).toISOString(),
     mode: r.mode, venue: r.venue, status: r.status, panel: panel.get(r.id) ?? [],
   }));

@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useCallback } from 'react';
+import React, { useCallback, useState } from 'react';
 import Link from 'next/link';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import {
@@ -10,7 +10,7 @@ import {
 import { useAuth } from '@/frontend/context/AuthContext';
 import { HR_SIDEBAR_ROLES } from '@/frontend/components/layout/DashboardSidebar';
 import CandidateSearchTab, { RECRUITMENT_VIEW_IDS, type RecruitmentView } from '@/frontend/components/candidates/CandidateSearchTab';
-import RecruitmentHub from './RecruitmentHub';
+import RecruitmentHub, { HubTabs, type HubTab } from './RecruitmentHub';
 import { useTheme } from '@/frontend/context/ThemeContext';
 
 /*
@@ -68,6 +68,7 @@ export default function RecruitmentWorkspace({ orgId }: { orgId: string }) {
     const pathname = usePathname();
     const searchParams = useSearchParams();
     const { user, membership } = useAuth();
+    const [tab, setTab] = useState<HubTab>('overview');
     const { theme, toggleTheme } = useTheme();
 
     const viewParam = searchParams?.get('view') ?? null;
@@ -90,12 +91,12 @@ export default function RecruitmentWorkspace({ orgId }: { orgId: string }) {
 
     return (
         // data-recruitment-workspace switches on the workspace skin in app/globals.css (neutral surface tokens, this page only).
-        <div data-recruitment-workspace="" className="relative isolate flex min-h-[calc(100dvh/var(--app-zoom,1))] flex-col overflow-hidden bg-[#f7f7f5] text-[#262626] md:flex-row dark:bg-[#171717] dark:text-[#fafaf9]">
+        <div data-recruitment-workspace="" className="relative isolate flex min-h-[calc(100dvh/var(--app-zoom,1))] flex-col overflow-hidden bg-[#f4f5fc] text-[#17152e] md:flex-row dark:bg-[#171717] dark:text-[#fafaf9]">
             <a href="#recruitment-main" className="sr-only focus:not-sr-only focus:fixed focus:left-4 focus:top-4 focus:z-[100] focus:rounded-xl focus:bg-white focus:p-3 focus:text-stone-700">Skip to recruitment content</a>
             {/* Soft colour behind the glass (design "21 · Hub"). Decoration only. */}
-            <div aria-hidden className="pointer-events-none absolute -top-44 left-40 -z-10 h-[520px] w-[520px] rounded-full bg-[#f5f5f3] opacity-[.08] blur-[100px] motion-safe:animate-[rw-drift_17s_ease-in-out_infinite_alternate] dark:opacity-[.16]" />
-            <div aria-hidden className="pointer-events-none absolute -right-32 top-64 -z-10 h-[460px] w-[460px] rounded-full bg-[#e7e0d2] opacity-[.08] blur-[100px] motion-safe:animate-[rw-drift_17s_ease-in-out_-6s_infinite_alternate] dark:opacity-[.16]" />
-            <div aria-hidden className="pointer-events-none absolute -bottom-52 left-[34%] -z-10 h-[500px] w-[500px] rounded-full bg-[#f4f1ea] opacity-[.08] blur-[100px] motion-safe:animate-[rw-drift_17s_ease-in-out_-11s_infinite_alternate] dark:opacity-[.16]" />
+            <div aria-hidden className="pointer-events-none absolute -top-44 left-40 -z-10 h-[520px] w-[520px] rounded-full bg-indigo-300 opacity-[.10] blur-[100px] motion-safe:animate-[rw-drift_17s_ease-in-out_infinite_alternate] dark:opacity-[.16]" />
+            <div aria-hidden className="pointer-events-none absolute -right-32 top-64 -z-10 h-[460px] w-[460px] rounded-full bg-violet-300 opacity-[.10] blur-[100px] motion-safe:animate-[rw-drift_17s_ease-in-out_-6s_infinite_alternate] dark:opacity-[.16]" />
+            <div aria-hidden className="pointer-events-none absolute -bottom-52 left-[34%] -z-10 h-[500px] w-[500px] rounded-full bg-indigo-200 opacity-[.12] blur-[100px] motion-safe:animate-[rw-drift_17s_ease-in-out_-11s_infinite_alternate] dark:opacity-[.16]" />
             <style>{'@keyframes rw-drift{from{transform:translate(0,0) scale(1)}to{transform:translate(50px,-36px) scale(1.14)}}'}</style>
 
             <nav
@@ -103,7 +104,7 @@ export default function RecruitmentWorkspace({ orgId }: { orgId: string }) {
                 className="relative z-10 m-3 flex shrink-0 gap-0.5 overflow-x-auto rounded-[26px] border border-white/95 bg-white/65 p-2 shadow-[0_14px_38px_rgba(45,45,40,.1)] backdrop-blur-[26px] md:sticky md:top-4 md:m-4 md:max-h-[calc(100dvh/var(--app-zoom,1)-2rem)] md:w-[88px] md:flex-col md:overflow-y-auto md:overflow-x-hidden md:px-2 md:py-3 dark:border-white/[.13] dark:bg-white/[.07] dark:shadow-[0_14px_38px_rgba(0,0,0,.45)]"
             >
                 <div className="hidden justify-center pb-2.5 pt-0.5 md:flex">
-                    <span className="flex h-11 w-11 items-center justify-center rounded-2xl bg-[#353535] text-white"><Sparkles className="h-5 w-5" aria-hidden /></span>
+                    <span className="flex h-11 w-11 items-center justify-center rounded-2xl bg-indigo-600 text-white"><Sparkles className="h-5 w-5" aria-hidden /></span>
                 </div>
                 {RAIL.map(({ id, label, icon: Icon }) => {
                     const on = view === id;
@@ -115,7 +116,7 @@ export default function RecruitmentWorkspace({ orgId }: { orgId: string }) {
                             onClick={() => go(id)}
                             aria-current={on ? 'page' : undefined}
                             className={`flex min-h-[54px] min-w-[68px] shrink-0 flex-col items-center justify-center gap-[3px] rounded-[18px] px-0.5 py-2 text-[11px] font-bold transition-[background-color,color,transform] duration-200 md:min-w-0 ${on
-                                ? 'bg-[#353535] text-white shadow-[0_10px_24px_rgba(53,53,53,.25)]'
+                                ? 'bg-indigo-600 text-white shadow-[0_10px_24px_rgba(53,53,53,.25)]'
                                 : 'text-[#575757] hover:-translate-y-0.5 hover:bg-[#262626]/5 hover:text-[#262626] dark:text-[#d6d3d1] dark:hover:bg-white/[.07] dark:hover:text-white'}`}
                         >
                             <Icon className="h-[19px] w-[19px]" aria-hidden />
@@ -136,38 +137,38 @@ export default function RecruitmentWorkspace({ orgId }: { orgId: string }) {
             </nav>
 
             <main id="recruitment-main" className="relative z-0 flex min-w-0 flex-1 flex-col gap-4 px-3 pb-7 md:py-[18px] md:pl-1 md:pr-6">
-                <header className="recruitment-header flex flex-wrap items-center gap-3">
-                    <div className="mr-2">
+                <header className="recruitment-header flex flex-wrap items-center gap-2">
+                    <div className="mr-1 shrink-0">
                         <h1 className="m-0 font-display text-2xl font-extrabold tracking-[-0.03em]">{TITLES[view]}</h1>
                         <p className="m-0 mt-1 text-sm text-[#575757] dark:text-[#d6d3d1]">{view === 'home' ? today : DESCRIPTIONS[view]}</p>
                     </div>
+                    {view === 'home' && <HubTabs tab={tab} setTab={setTab} />}
                     <div className="grow" />
-                    <div role="group" aria-label="Color theme" className="flex rounded-full border border-white/95 bg-white/65 p-1 dark:border-white/10 dark:bg-white/10">
-                        <button type="button" onClick={() => { if (theme !== 'light') toggleTheme(); }} aria-label="Switch to light theme" aria-pressed={theme === 'light'} className={`inline-flex h-9 w-9 items-center justify-center rounded-full ${theme === 'light' ? 'bg-[#f59e0b] text-[#262626]' : 'text-text-secondary'}`}><Sun className="h-5 w-5" aria-hidden /></button>
-                        <button type="button" onClick={() => { if (theme !== 'dark') toggleTheme(); }} aria-label="Switch to dark theme" aria-pressed={theme === 'dark'} className={`inline-flex h-9 w-9 items-center justify-center rounded-full ${theme === 'dark' ? 'bg-primary text-white' : 'text-text-secondary'}`}><Moon className="h-5 w-5" aria-hidden /></button>
-                    </div>
                     {view !== 'search' && (
                         <button
                             type="button"
                             onClick={() => go('search')}
                             aria-label="Search people or roles"
-                            className="flex min-h-11 items-center gap-2.5 rounded-full border border-white/95 bg-white/65 px-4 text-left text-sm text-[#737373] backdrop-blur-[24px] transition-colors hover:text-[#262626] sm:w-[260px] dark:border-white/[.13] dark:bg-white/[.07] dark:text-[#a8a29e] dark:hover:text-white"
+                            className="flex min-h-11 items-center gap-2.5 rounded-full border border-white/95 bg-white/65 px-4 text-left text-sm text-[#737373] backdrop-blur-[24px] transition-colors hover:text-[#262626] sm:w-[205px] dark:border-white/[.13] dark:bg-white/[.07] dark:text-[#a8a29e] dark:hover:text-white"
                         >
                             <Search className="h-[17px] w-[17px] shrink-0" aria-hidden /><span className="hidden sm:inline">Search people or roles</span>
                         </button>
                     )}
+                    <div role="group" aria-label="Color theme" className="flex rounded-full border border-white/95 bg-white/65 p-1 dark:border-white/10 dark:bg-white/10">
+                        <button type="button" onClick={() => { if (theme !== 'light') toggleTheme(); }} aria-label="Switch to light theme" aria-pressed={theme === 'light'} className={`inline-flex h-8 w-8 items-center justify-center rounded-full ${theme === 'light' ? 'bg-[#f59e0b] text-[#262626]' : 'text-text-secondary'}`}><Sun className="h-5 w-5" aria-hidden /></button>
+                        <button type="button" onClick={() => { if (theme !== 'dark') toggleTheme(); }} aria-label="Switch to dark theme" aria-pressed={theme === 'dark'} className={`inline-flex h-8 w-8 items-center justify-center rounded-full ${theme === 'dark' ? 'bg-primary text-white' : 'text-text-secondary'}`}><Moon className="h-5 w-5" aria-hidden /></button>
+                    </div>
                     {view !== 'requisitions' && (
-                        <button
-                            type="button"
-                            onClick={() => go('requisitions')}
-                            className="recruitment-primary inline-flex min-h-11 items-center justify-center gap-2 rounded-full border border-[#353535] bg-[#353535] px-[18px] text-sm font-bold text-white shadow-[0_10px_24px_rgba(53,53,53,.22)] transition-transform hover:-translate-y-0.5 active:scale-[.96]"
+                        <Link
+                            href={`/${orgId}/hiring-requests`}
+                            className="recruitment-primary inline-flex min-h-11 items-center justify-center gap-2 rounded-full border border-indigo-600 bg-[#353535] px-[18px] text-sm font-bold text-white shadow-[0_10px_24px_rgba(53,53,53,.22)] transition-transform hover:-translate-y-0.5 active:scale-[.96]"
                         >
-                            <Plus className="h-4 w-4" aria-hidden />Hiring requests
-                        </button>
+                            <Plus className="h-4 w-4" aria-hidden />Hiring request
+                        </Link>
                     )}
                 </header>
 
-                {view === 'home' && <RecruitmentHub orgId={orgId} firstName={firstName} onOpen={go} />}
+                {view === 'home' && <RecruitmentHub orgId={orgId} firstName={firstName} onOpen={go} tab={tab} setTab={setTab} />}
 
                 {/* Every other rail item is the existing Recruitment view. Kept mounted once opened, so going Home and
                     back never loses a search or an upload in progress. */}

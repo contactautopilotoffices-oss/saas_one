@@ -328,7 +328,7 @@ export async function listMembers(client: SupabaseClient, orgId: string, positio
  * Owner 2026-11-25: each person's ratings in this position, from the submitted scorecards of their interviews for it
  * (cancelled interviews left out). Before the hiring-flow migration there are none, so a missing table gives none.
  */
-async function memberScores(client: SupabaseClient, orgId: string, positionId: string, candidateIds: string[]): Promise<Map<string, MemberScore>> {
+export async function memberScores(client: SupabaseClient, orgId: string, positionId: string, candidateIds: string[]): Promise<Map<string, MemberScore>> {
   const out = new Map<string, MemberScore>();
   if (!candidateIds.length) return out;
   const interviews: { id: string; candidate_id: string; round: string | null }[] = [];
