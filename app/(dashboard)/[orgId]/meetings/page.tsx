@@ -7,7 +7,7 @@ import { useAppSession } from '@/frontend/hooks/useAppSession';
 
 // Org admins have Meetings as a tab of the main dashboard; send them there.
 // Other roles (property admin, procurement) keep this standalone page.
-const DASHBOARD_TAB_ROLES = ['org_super_admin', 'org_admin'];
+const DASHBOARD_TAB_ROLES = ['org_super_admin', 'ops_super_admin', 'org_admin'];
 
 export default function MeetingsPage() {
     const params = useParams<{ orgId: string }>();

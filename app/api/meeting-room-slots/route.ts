@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/frontend/utils/supabase/server';
 import { supabaseAdmin } from '@/backend/lib/supabase/admin';
+import { hasAnyOrgOrPropRole } from '@/backend/lib/meetingRooms/bookingVisibility';
 
 /**
  * GET /api/meeting-room-slots
@@ -55,28 +56,14 @@ export async function POST(request: NextRequest) {
             );
         }
 
-        // We check if they are at least org_admin or property_admin to be safe. 
-        // For simplicity and since these are global slots, we check if they are an org_admin for any org, 
-        // or a property_admin for any property.
-        
-        const { data: orgMembership } = await supabase
-            .from('organization_memberships')
-            .select('role')
-            .eq('user_id', user.id)
-            .eq('role', 'org_admin')
-            .limit(1);
+        // We check if they are an org admin (including org_super_admin/ops_super_admin/master_admin) or property admin.
+        const hasAccess = await hasAnyOrgOrPropRole(
+            user.id,
+            ['property_admin', 'staff', 'mst', 'ops_super_admin'],
+            ['org_admin', 'org_super_admin', 'ops_super_admin', 'master_admin']
+        );
 
-        const { data: propMembership } = await supabase
-            .from('property_memberships')
-            .select('role')
-            .eq('user_id', user.id)
-            .in('role', ['property_admin', 'staff', 'mst'])
-            .limit(1);
-
-        const isSuperAdmin = orgMembership && orgMembership.length > 0;
-        const isPropertyAdmin = propMembership && propMembership.length > 0;
-
-        if (!isSuperAdmin && !isPropertyAdmin) {
+        if (!hasAccess) {
              return NextResponse.json({ error: 'Forbidden: Insufficient permissions' }, { status: 403 });
         }
 

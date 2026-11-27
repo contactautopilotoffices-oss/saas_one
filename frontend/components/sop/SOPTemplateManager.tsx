@@ -118,6 +118,16 @@ const SOPTemplateManager: React.FC<SOPTemplateManagerProps> = ({ propertyId, pro
     }, [templates, liveNow]);
 
     const fetchTemplates = useCallback(async () => {
+        const validPropId = (propertyId && propertyId !== 'all' && propertyId !== 'undefined' && propertyId !== 'null') ? propertyId : null;
+        const validPropertyIds = (propertyIds || []).filter(id => id && id !== 'all' && id !== 'undefined');
+
+        // Prevent unscoped cross-org queries/caching when a multi-property view passes []
+        if (propertyIds !== undefined && validPropertyIds.length === 0 && !validPropId) {
+            setTemplates([]);
+            setIsLoading(false);
+            return;
+        }
+
         const cacheKey = `sop-templates-${propertyId || (propertyIds?.join(','))}-${isAdmin}`;
         const cached = getCachedData(cacheKey);
         
@@ -139,9 +149,6 @@ const SOPTemplateManager: React.FC<SOPTemplateManagerProps> = ({ propertyId, pro
                 `)
                 .eq('is_active', true);
 
-            const validPropId = (propertyId && propertyId !== 'all' && propertyId !== 'undefined' && propertyId !== 'null') ? propertyId : null;
-            const validPropertyIds = (propertyIds || []).filter(id => id && id !== 'all' && id !== 'undefined');
-
             if (validPropertyIds.length > 0) {
                 query = query.in('property_id', validPropertyIds);
             } else if (validPropId) {
@@ -151,7 +158,7 @@ const SOPTemplateManager: React.FC<SOPTemplateManagerProps> = ({ propertyId, pro
             if (!isAdmin) {
                 const { data: { user } } = await supabase.auth.getUser();
                 if (user) {
-                    query = query.or(`assigned_to.is.null,assigned_to.cs.{${user.id}}`);
+                    query = query.or(`assigned_to.is.null,assigned_to.eq.{},assigned_to.cs.{${user.id}}`);
                 }
             }
 

@@ -3,6 +3,7 @@ import { supabaseAdmin } from '@/backend/lib/supabase/admin';
 import { NotificationService } from '@/backend/services/NotificationService';
 import { getBookingDateTimeIST } from '@/backend/utils/timezone';
 import { isCreditExemptBooker } from '@/backend/lib/meetingRooms/creditExempt';
+import { hasPropertyOrOrgRole } from '@/backend/lib/meetingRooms/bookingVisibility';
 
 // Moved unchanged from app/api/meeting-room-bookings/[id]/route.ts (2026-11-18) so the WhatsApp brain cancels a
 // booking through exactly the same checks, refund and notifications as the app. The route imports it from here.
@@ -40,37 +41,29 @@ export async function cancelBooking(bookingId: string, user: { id: string }) {
 
     const isOwner = booking.user_id === user.id;
 
-    // 2. Permission Check: Master Admin / Owner / Property Admin / Technical Staff
-    const { data: userProfile } = await adminSupabase
-        .from('users')
-        .select('is_master_admin')
-        .eq('id', user.id)
-        .maybeSingle();
-
-    if (userProfile?.is_master_admin) {
-        // Master Admin can cancel anything
-    } else if (isOwner) {
+    if (isOwner) {
         // User can cancel their own booking
+    } else if (
+        await hasPropertyOrOrgRole(
+            user.id,
+            booking.property_id,
+            ['property_admin', 'org_super_admin', 'ops_super_admin', 'org_admin'],
+            ['org_super_admin', 'ops_super_admin', 'org_admin', 'master_admin']
+        )
+    ) {
+        // Admin or Master Admin can cancel
     } else {
-        // 3. Check Property Permissions
+        // Staff/MST may cancel only when they hold the 'technical' skill
         const { data: membership } = await adminSupabase
             .from('property_memberships')
             .select('role')
             .eq('user_id', user.id)
             .eq('property_id', booking.property_id)
-            .eq('is_active', true)
+            .or('is_active.is.null,is_active.eq.true')
             .maybeSingle();
 
-        if (!membership) {
-            return { error: 'Forbidden', status: 403 };
-        }
-
-        const role = membership.role.toLowerCase();
-
-        if (role === 'property_admin' || role === 'org_super_admin' || role === 'org_admin') {
-            // Admin can cancel
-        } else if (role === 'staff' || role === 'mst') {
-            // Check for technical skill
+        const role = membership?.role?.toLowerCase();
+        if (role === 'staff' || role === 'mst') {
             const { data: skill } = await adminSupabase
                 .from('mst_skills')
                 .select('id')

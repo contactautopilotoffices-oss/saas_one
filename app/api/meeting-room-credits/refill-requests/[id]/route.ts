@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/backend/lib/supabase/admin';
 import { createClient } from '@/frontend/utils/supabase/server';
+import { hasPropertyOrOrgRole } from '@/backend/lib/meetingRooms/bookingVisibility';
 
 /**
  * PATCH /api/meeting-room-credits/refill-requests/[id]
@@ -39,38 +40,12 @@ export async function PATCH(
             return NextResponse.json({ error: 'Request has already been reviewed' }, { status: 409 });
         }
 
-        // 1. Check Property Level
-        const { data: membership } = await supabaseAdmin
-            .from('property_memberships')
-            .select('role')
-            .eq('property_id', refillReq.property_id)
-            .eq('user_id', user.id)
-            .maybeSingle();
-
-        let canReview = ['property_admin', 'staff', 'org_admin'].includes(membership?.role || '');
-
-        // 2. Check System/Org Level
-        if (!canReview) {
-            const [profileRes, propertyRes] = await Promise.all([
-                supabaseAdmin.from('users').select('is_master_admin').eq('id', user.id).single(),
-                supabaseAdmin.from('properties').select('organization_id').eq('id', refillReq.property_id).single()
-            ]);
-
-            if (profileRes.data?.is_master_admin) {
-                canReview = true;
-            } else if (propertyRes.data?.organization_id) {
-                const { data: orgMember } = await supabaseAdmin
-                    .from('organization_memberships')
-                    .select('role')
-                    .eq('organization_id', propertyRes.data.organization_id)
-                    .eq('user_id', user.id)
-                    .maybeSingle();
-                
-                if (['org_super_admin', 'org_admin'].includes(orgMember?.role || '')) {
-                    canReview = true;
-                }
-            }
-        }
+        const canReview = await hasPropertyOrOrgRole(
+            user.id,
+            refillReq.property_id,
+            ['property_admin', 'staff', 'org_admin', 'ops_super_admin'],
+            ['org_super_admin', 'ops_super_admin', 'org_admin', 'master_admin']
+        );
 
         if (!canReview) {
             return NextResponse.json({ error: 'Forbidden' }, { status: 403 });

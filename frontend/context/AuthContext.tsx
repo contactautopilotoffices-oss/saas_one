@@ -100,7 +100,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
                         )
                     `)
                     .eq('user_id', userId)
-                    .eq('is_active', true)
+                    .or('is_active.is.null,is_active.eq.true')
                     .then(res => { if (res.error) throw res.error; return res.data; }),
                 supabase
                     .from('property_memberships')
@@ -114,7 +114,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
                         )
                     `)
                     .eq('user_id', userId)
-                    .eq('is_active', true)
+                    .or('is_active.is.null,is_active.eq.true')
                     .then(res => { if (res.error) throw res.error; return res.data; }),
                 supabase
                     .from('users')

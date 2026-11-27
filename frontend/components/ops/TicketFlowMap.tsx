@@ -189,10 +189,11 @@ export default function TicketFlowMap({
         if (!membership) return;
 
         const checkAdmin = () => {
-            const orgRole = membership.org_role;
-            const isMaster = (user as any)?.user_metadata?.is_master_admin || (user as any)?.is_master_admin;
+            const orgRole = (membership.org_role || '').toLowerCase();
+            const allOrgRoles = (membership.all_org_memberships || []).map(m => (m.role || '').toLowerCase());
+            const isMaster = membership.is_master_admin || (user as any)?.user_metadata?.is_master_admin || (user as any)?.is_master_admin;
             // Owner 2026-11-03: + 'tech' (the Tech console has the Super Admin console's Requests tab)
-            return isMaster || ['org_admin', 'org_super_admin', 'owner', 'tech'].includes(orgRole || '');
+            return isMaster || [orgRole, ...allOrgRoles].some(r => ['org_admin', 'org_super_admin', 'ops_super_admin', 'owner', 'tech'].includes(r));
         };
 
         const adminStatus = checkAdmin();
@@ -476,7 +477,7 @@ export default function TicketFlowMap({
             return;
         }
 
-        const isOrgLevelAdmin = membership?.is_master_admin || ['org_super_admin', 'owner', 'admin', 'org_admin', 'tech'].includes(membership?.org_role || '');
+        const isOrgLevelAdmin = membership?.is_master_admin || ['org_super_admin', 'ops_super_admin', 'owner', 'admin', 'org_admin', 'tech'].includes((membership?.org_role || '').toLowerCase()) || (membership?.all_org_memberships || []).some(m => ['org_super_admin', 'ops_super_admin', 'owner', 'admin', 'org_admin', 'tech'].includes((m.role || '').toLowerCase()));
         const effectiveOrgId = organizationId || membership?.org_id;
 
         if (isOrgLevelAdmin) {

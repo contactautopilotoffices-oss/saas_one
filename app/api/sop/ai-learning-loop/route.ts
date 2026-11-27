@@ -24,8 +24,8 @@ async function verifyAuth(supabase: any) {
 
     const [profileRes, orgRes, propRes] = await Promise.all([
         supabaseAdmin.from('users').select('is_master_admin').eq('id', user.id).maybeSingle(),
-        supabaseAdmin.from('organization_memberships').select('role, organization_id').eq('user_id', user.id).eq('is_active', true),
-        supabaseAdmin.from('property_memberships').select('role, property_id').eq('user_id', user.id).eq('is_active', true),
+        supabaseAdmin.from('organization_memberships').select('role, organization_id').eq('user_id', user.id).or('is_active.is.null,is_active.eq.true'),
+        supabaseAdmin.from('property_memberships').select('role, property_id, organization_id').eq('user_id', user.id).or('is_active.is.null,is_active.eq.true'),
     ]);
 
     const isMasterAdmin = Boolean(profileRes.data?.is_master_admin || user.user_metadata?.is_master_admin);
@@ -37,8 +37,12 @@ async function verifyAuth(supabase: any) {
         return { user: null, error: 'Forbidden: Insufficient privileges to view Checklist AI Learning Loop', status: 403 };
     }
 
-    const orgId = orgRes.data?.[0]?.organization_id || null;
-    return { user, orgId, isMasterAdmin };
+    const adminOrgIds = [...new Set([
+        ...(orgRes.data || []).filter(m => m.organization_id && ADMIN_ROLES.includes(String(m.role || '').toLowerCase())).map(m => m.organization_id as string),
+        ...(propRes.data || []).filter(m => m.organization_id && ADMIN_ROLES.includes(String(m.role || '').toLowerCase())).map(m => m.organization_id as string),
+    ])];
+    const orgId = adminOrgIds[0] || orgRes.data?.[0]?.organization_id || null;
+    return { user, orgId, adminOrgIds, isMasterAdmin };
 }
 
 export async function GET(request: NextRequest) {
@@ -50,7 +54,11 @@ export async function GET(request: NextRequest) {
 
     const { searchParams } = new URL(request.url);
     const propertyId = searchParams.get('propertyId');
+    const requestedOrgId = searchParams.get('organizationId');
     const hasProp = propertyId && propertyId !== 'all' && propertyId !== 'undefined' && propertyId !== 'null';
+    const scopedOrgId = requestedOrgId && (auth.isMasterAdmin || (auth.adminOrgIds || []).includes(requestedOrgId))
+        ? requestedOrgId
+        : auth.orgId;
 
     try {
         // 1. Fetch Feedback Rows (Learned Memory)
@@ -82,8 +90,8 @@ export async function GET(request: NextRequest) {
 
         if (hasProp) {
             feedbackQuery = feedbackQuery.eq('property_id', propertyId);
-        } else if (auth.orgId && !auth.isMasterAdmin) {
-            feedbackQuery = feedbackQuery.eq('organization_id', auth.orgId);
+        } else if (scopedOrgId) {
+            feedbackQuery = feedbackQuery.eq('organization_id', scopedOrgId);
         }
 
         const { data: feedbackRows, error: feedbackError } = await feedbackQuery.limit(100);
@@ -153,6 +161,7 @@ export async function GET(request: NextRequest) {
                 photos,
                 checked_at,
                 completions:completion_id(
+                    organization_id,
                     property_id,
                     template_id,
                     scheduled_date,
@@ -177,10 +186,12 @@ export async function GET(request: NextRequest) {
 
         const queue = (queueRows || [])
             .filter((item: any) => {
-                // If filtering by property
+                // If filtering by property, or scope All Properties queue to caller's org
                 if (hasProp) {
                     const itemPropId = item.completions?.property_id;
                     if (itemPropId !== propertyId) return false;
+                } else if (scopedOrgId && item.completions?.organization_id !== scopedOrgId) {
+                    return false;
                 }
                 return true;
             })

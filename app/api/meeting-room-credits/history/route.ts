@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/backend/lib/supabase/admin';
 import { createClient } from '@/frontend/utils/supabase/server';
+import { hasPropertyOrOrgRole } from '@/backend/lib/meetingRooms/bookingVisibility';
 
 export async function GET(request: NextRequest) {
     try {
@@ -15,15 +16,12 @@ export async function GET(request: NextRequest) {
 
         if (!propertyId) return NextResponse.json({ error: 'propertyId required' }, { status: 400 });
 
-        // Admin check (simplified, we trust supabaseAdmin for the actual query)
-        const { data: membership } = await supabaseAdmin
-            .from('property_memberships')
-            .select('role')
-            .eq('property_id', propertyId)
-            .eq('user_id', user.id)
-            .maybeSingle();
-
-        const isAdmin = ['property_admin', 'staff', 'org_admin'].includes(membership?.role || '');
+        const isAdmin = await hasPropertyOrOrgRole(
+            user.id,
+            propertyId,
+            ['property_admin', 'staff', 'org_admin', 'ops_super_admin'],
+            ['org_super_admin', 'ops_super_admin', 'org_admin', 'master_admin']
+        );
 
         let query = supabaseAdmin
             .from('meeting_room_credit_log')

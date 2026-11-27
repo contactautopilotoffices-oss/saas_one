@@ -114,12 +114,16 @@ function MediaSlot({
 }
 
 export default function TicketDetail({ ticketId, onBack, isAdmin = false }: TicketDetailProps) {
-    const { user } = useAuth();
-    const userRole = user?.user_metadata?.role || '';
+    const { user, membership } = useAuth();
+    const userRole = (user?.user_metadata?.role || '').toLowerCase();
+    const orgRoles = [
+        membership?.org_role,
+        ...(membership?.all_org_memberships?.map(m => m.role) || []),
+    ].filter(Boolean).map(r => (r || '').toLowerCase());
     const isTenant = userRole === 'tenant';
-    const isMasterAdmin = userRole === 'master_admin';
-    const isOrgSuperAdmin = userRole === 'org_super_admin';
-    const isProcurement = userRole.includes('procurement');
+    const isMasterAdmin = Boolean(membership?.is_master_admin) || userRole === 'master_admin' || orgRoles.includes('master_admin');
+    const isOrgSuperAdmin = userRole === 'org_super_admin' || userRole === 'ops_super_admin' || orgRoles.some(r => ['org_super_admin', 'ops_super_admin'].includes(r));
+    const isProcurement = userRole.includes('procurement') || orgRoles.some(r => r.includes('procurement'));
 
     const [ticket, setTicket] = useState<Record<string, unknown> | null>(null);
     const [timeline, setTimeline] = useState<TimelineStep[]>([]);

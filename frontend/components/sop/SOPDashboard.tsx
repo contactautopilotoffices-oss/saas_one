@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useState, useEffect, useCallback } from 'react';
+import { useParams } from 'next/navigation';
 import { useAuth } from '@/frontend/context/AuthContext';
 import Skeleton from '@/frontend/components/ui/Skeleton';
 import { Toast } from '@/frontend/components/ui/Toast';
@@ -15,17 +16,23 @@ import { SOPChecklistSettingsSection } from './SOPChecklistSettingsSection';
 import { SOPVisionTestingModal } from './SOPVisionTestingModal';
 import SOPAiLearningLoop from './SOPAiLearningLoop';
 import { useDataCache } from '@/frontend/context/DataCacheContext';
+import { normalizeSopRole, resolveSopUserRole, type SopMembershipLike } from './resolveSopRole';
+
+export { resolveSopUserRole, type SopMembershipLike };
 
 interface SOPDashboardProps {
     propertyId?: string;
     propertyIds?: string[];
+    organizationId?: string;
     propertySelector?: React.ReactNode;
     headerRight?: React.ReactNode;
 }
 
-const SOPDashboard: React.FC<SOPDashboardProps> = ({ propertyId, propertyIds, propertySelector, headerRight }) => {
+const SOPDashboard: React.FC<SOPDashboardProps> = ({ propertyId, propertyIds, organizationId, propertySelector, headerRight }) => {
     const isMultiProperty = !!propertyIds && propertyIds.length > 0;
-    const { membership } = useAuth();
+    const { user, membership, isLoading: authLoading, isMembershipLoading } = useAuth();
+    const routeParams = useParams() as Record<string, string | string[] | undefined> | null;
+    const routeOrgId = typeof routeParams?.orgId === 'string' ? routeParams.orgId : undefined;
 
     // Parse initial view and parameters from URL or sessionStorage
     const initialParams = (() => {
@@ -77,9 +84,15 @@ const SOPDashboard: React.FC<SOPDashboardProps> = ({ propertyId, propertyIds, pr
     const [viewingPropertyId, setViewingPropertyId] = useState<string | null>(initialParams.propId);
     const [showVisionLab, setShowVisionLab] = useState(false);
 
-    // Sync active view and parameters to sessionStorage & URL so refreshing stays on the exact current view
+    const [isLoading, setIsLoading] = useState(true);
+    const [userRole, setUserRole] = useState<string>('');
+    const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
+    const [historyFilter, setHistoryFilter] = useState<'all' | 'due' | 'missed' | 'completed'>('all');
+    const { invalidateCache } = useDataCache();
+
+    // Sync active view and parameters to sessionStorage & URL once auth/role state settles
     useEffect(() => {
-        if (typeof window === 'undefined') return;
+        if (typeof window === 'undefined' || isLoading) return;
         try {
             sessionStorage.setItem(`sop_active_view_${propertyId || 'global'}`, activeView);
 
@@ -105,69 +118,44 @@ const SOPDashboard: React.FC<SOPDashboardProps> = ({ propertyId, propertyIds, pr
                 window.history.replaceState(window.history.state, '', url.toString());
             }
         } catch {}
-    }, [activeView, propertyId, selectedTemplateId, selectedCompletionId, selectedCompletionDate, viewingCompletionId, viewingCompletionTemplateId]);
-
-    const [isLoading, setIsLoading] = useState(true);
-    const [userRole, setUserRole] = useState<string>('');
-    const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
-    const [historyFilter, setHistoryFilter] = useState<'all' | 'due' | 'missed' | 'completed'>('all');
-    const { invalidateCache } = useDataCache();
+    }, [activeView, isLoading, propertyId, selectedTemplateId, selectedCompletionId, selectedCompletionDate, viewingCompletionId, viewingCompletionTemplateId]);
 
     useEffect(() => {
-        // Determine user role for this property
-        const fetchUserRole = async () => {
-            try {
-                const orgRole = (membership?.org_role || '').toLowerCase().replace(/\s+/g, '_');
-                const isOrgElevated = ['org_super_admin', 'ops_super_admin', 'master_admin', 'org_admin', 'owner', 'admin'].includes(orgRole);
+        // Wait for auth & membership before falling back to 'staff' so admins aren't bounced to 'history'
+        if (authLoading || isMembershipLoading || (Boolean(user) && !membership)) {
+            setIsLoading(true);
+            return;
+        }
+        try {
+            const resolved = resolveSopUserRole({
+                membership,
+                propertyId,
+                propertyIds,
+                organizationId,
+                routeOrgId,
+            });
+            setUserRole(resolved.userRole);
+        } catch (err) {
+            console.error('Error fetching user role:', err);
+        } finally {
+            setIsLoading(false);
+        }
+    }, [propertyId, propertyIds, organizationId, routeOrgId, membership, authLoading, isMembershipLoading, user]);
 
-                if (isOrgElevated) {
-                    // Org-wide admins always retain their elevated org role across all properties
-                    setUserRole(orgRole);
-                } else if (propertyId) {
-                    const property = membership?.properties?.find(p => p.id === propertyId);
-                    if (property?.role) {
-                        setUserRole(property.role.toLowerCase().replace(/\s+/g, '_'));
-                    } else if (orgRole) {
-                        setUserRole(orgRole);
-                    } else {
-                        setUserRole('staff');
-                    }
-                } else if (isMultiProperty && propertyIds) {
-                    // Check if they are an admin on ANY of the properties being viewed
-                    const hasAdminRole = membership?.properties?.some(p => 
-                        propertyIds.includes(p.id) && 
-                        ['property_admin', 'org_admin', 'org_super_admin', 'master_admin', 'ops_super_admin'].includes((p.role || '').toLowerCase().replace(/\s+/g, '_'))
-                    );
-                    
-                    if (hasAdminRole) {
-                        setUserRole('property_admin');
-                    } else if (orgRole) {
-                        setUserRole(orgRole);
-                    } else {
-                        setUserRole('staff');
-                    }
-                } else {
-                    setUserRole(orgRole || 'staff');
-                }
-            } catch (err) {
-                console.error('Error fetching user role:', err);
-            } finally {
-                setIsLoading(false);
-            }
+    const { normalizedUserRole, isAdmin, isOrgSuperAdmin } = (() => {
+        const resolved = resolveSopUserRole({
+            membership,
+            propertyId,
+            propertyIds,
+            organizationId,
+            routeOrgId,
+        });
+        return {
+            normalizedUserRole: userRole ? normalizeSopRole(userRole) : resolved.userRole,
+            isAdmin: resolved.isAdmin,
+            isOrgSuperAdmin: resolved.isOrgSuperAdmin,
         };
-
-        fetchUserRole();
-    }, [propertyId, propertyIds, membership, isMultiProperty]);
-
-    const normalizedUserRole = (userRole || '').toLowerCase().replace(/\s+/g, '_');
-    const normalizedOrgRole = (membership?.org_role || '').toLowerCase().replace(/\s+/g, '_');
-    const isAdmin = ['property_admin', 'org_admin', 'org_super_admin', 'master_admin', 'ops_super_admin'].includes(normalizedUserRole) ||
-                    ['org_admin', 'org_super_admin', 'master_admin', 'ops_super_admin'].includes(normalizedOrgRole);
-    const isOrgSuperAdmin = Boolean(
-        membership?.is_master_admin ||
-        ['org_super_admin', 'master_admin', 'ops_super_admin'].includes(normalizedOrgRole) ||
-        ['org_super_admin', 'master_admin', 'ops_super_admin'].includes(normalizedUserRole)
-    );
+    })();
 
     // Non-admin users should only be defaulted to history if currently on admin-only 'list' view
     useEffect(() => {
@@ -446,9 +434,17 @@ const SOPDashboard: React.FC<SOPDashboardProps> = ({ propertyId, propertyIds, pr
                                     />
                                 )}
 
+                                {activeView === 'settings' && isAdmin && !propertyId && (
+                                    <div className="p-8 text-center text-slate-500">
+                                        <p className="text-sm font-semibold text-slate-700">Select a specific property</p>
+                                        <p className="text-xs text-slate-400 mt-1">Checklist settings are configured per property. Choose a property from the selector above.</p>
+                                    </div>
+                                )}
+
                                 {activeView === 'learning' && (
                                     <SOPAiLearningLoop
                                         propertyId={propertyId}
+                                        organizationId={organizationId}
                                         isOrgSuperAdmin={isOrgSuperAdmin}
                                     />
                                 )}

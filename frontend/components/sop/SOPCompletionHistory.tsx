@@ -395,6 +395,14 @@ const SOPCompletionHistory: React.FC<SOPCompletionHistoryProps> = ({ propertyId,
                 const validPropId = (propertyId && propertyId !== 'all' && propertyId !== 'undefined' && propertyId !== 'null') ? propertyId : null;
                 const validPropertyIds = (propertyIds || []).filter(id => id && id !== 'all' && id !== 'undefined');
 
+                // Prevent unscoped cross-org queries when a multi-property view passes []
+                if (propertyIds !== undefined && validPropertyIds.length === 0 && !validPropId) {
+                    setCompletions([]);
+                    setRawTemplateData([]);
+                    setIsLoading(false);
+                    return;
+                }
+
                 if (validPropertyIds.length > 0) {
                     completionQuery = (completionQuery as any).in('property_id', validPropertyIds);
                 } else if (validPropId) {
