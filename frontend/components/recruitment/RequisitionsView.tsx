@@ -395,7 +395,7 @@ function RequisitionForm({ orgId, open, requisition, departments, hierarchy, onC
 }
 
 /** One request: the details, the history, and (for its approver) the decision. */
-function RequisitionDrawer({ orgId, id, onClose, onChanged, onEdit }: { orgId: string; id: string | null; onClose: () => void; onChanged: () => void; onEdit: (r: Requisition) => void }) {
+export function RequisitionDrawer({ orgId, id, onClose, onChanged, onEdit, initialDecision = null }: { orgId: string; id: string | null; onClose: () => void; onChanged: () => void; onEdit?: (r: Requisition) => void; initialDecision?: RequisitionDecision | null }) {
     const { notify, reportError } = useUi();
     const [state, setState] = useState<RequisitionResponse | null>(null);
     const [nonce, setNonce] = useState(0);
@@ -412,7 +412,7 @@ function RequisitionDrawer({ orgId, id, onClose, onChanged, onEdit }: { orgId: s
     const s = state && state.requisition.id === id ? state : null;
     const r = s?.requisition ?? null;
     const [busy, setBusy] = useState(false);
-    const [decision, setDecision] = useState<RequisitionDecision | null>(null);
+    const [decision, setDecision] = useState<RequisitionDecision | null>(initialDecision);
     const [reason, setReason] = useState('');
     const [inPlan, setInPlan] = useState<boolean | null>(null);
     const [confirmWithdraw, setConfirmWithdraw] = useState(false);
@@ -461,9 +461,9 @@ function RequisitionDrawer({ orgId, id, onClose, onChanged, onEdit }: { orgId: s
         <Drawer open={!!id} onClose={onClose} labelId="req-drawer-title" title={r ? `${r.roleTitle}${r.requisitionNo ? ` · ${r.requisitionNo}` : ''}` : 'Hiring request'}
             subtitle={r ? <span className="flex flex-wrap items-center gap-x-2"><StatusPill tone={STATUS_TONE[r.status]}>{REQUISITION_STATUS_LABELS[r.status]}</StatusPill>{r.currentLevel && <span className="text-xs text-text-secondary">waiting on {r.currentApproverName ?? APPROVAL_LEVEL_LABELS[r.currentLevel]} ({APPROVAL_LEVEL_LABELS[r.currentLevel]}) · {r.ageDays} {r.ageDays === 1 ? 'day' : 'days'}</span>}</span> : undefined}
             footer={r && s ? <>
-                {s.canEdit && <button type="button" onClick={() => onEdit(r)} disabled={busy} className={K_BTN}>Edit</button>}
-                {s.canEdit && r.status === 'draft' && <button type="button" onClick={() => void act(`/api/recruitment/requisitions/${encodeURIComponent(r.id)}`, { action: 'submit' }, 'Submitted for approval')} disabled={busy} className={K_BTN_PRIMARY}><Send className="h-4 w-4" />Submit for approval</button>}
-                {s.canEdit && r.status === 'sent_back' && <button type="button" onClick={() => onEdit(r)} disabled={busy} className={K_BTN_PRIMARY}>Change and resubmit</button>}
+                {s.canEdit && onEdit && <button type="button" onClick={() => onEdit?.(r)} disabled={busy} className={K_BTN}>Edit</button>}
+                {s.canEdit && onEdit && r.status === 'draft' && <button type="button" onClick={() => void act(`/api/recruitment/requisitions/${encodeURIComponent(r.id)}`, { action: 'submit' }, 'Submitted for approval')} disabled={busy} className={K_BTN_PRIMARY}><Send className="h-4 w-4" />Submit for approval</button>}
+                {s.canEdit && onEdit && r.status === 'sent_back' && <button type="button" onClick={() => onEdit?.(r)} disabled={busy} className={K_BTN_PRIMARY}>Change and resubmit</button>}
                 {/* Spec A24: the raiser tells the approver a request on hold is still needed */}
                 {s.canConfirmNeeded && !confirmWithdraw && <button type="button" onClick={() => void act(`/api/recruitment/requisitions/${encodeURIComponent(r.id)}`, { action: 'still_needed' }, 'The approver is told the role is still needed')} disabled={busy} className={K_BTN_PRIMARY}><Check className="h-4 w-4" />Still needed</button>}
                 {/* Owner 2026-11-20: only the person who raised it sees Withdraw (the server refuses anyone else) */}

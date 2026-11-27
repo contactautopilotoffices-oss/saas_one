@@ -17,7 +17,8 @@ import { istDue, kindLink } from "./applications";
 import { logMessage } from "./audit";
 import { RESUME_BUCKET } from "./config";
 import { parsePhone } from "./normalize";
-import { whatsappParams, type OutreachSettings } from "./outreach-settings";
+import { briefDownloadUrl } from "./assignment-brief-storage";
+import { BriefAttachmentSchema, whatsappParams, type OutreachSettings } from "./outreach-settings";
 import { CandidateActionError } from "./records";
 import { loadRecruitmentConfig } from "./requisitions";
 import { defaultScreeningSender, type ScreeningSender } from "./screening";
@@ -63,7 +64,7 @@ const text = (v: unknown, max: number) => (typeof v === "string" ? v.trim().slic
 
 // Assignments -----------------------------------------------------------------------------------------------------------
 
-export interface AssignmentInput { applicationId: string | null; candidateId: string; positionId: string; title: unknown; brief: unknown; guidelines?: unknown; driveLink?: unknown; dueAt?: unknown }
+export interface AssignmentInput { applicationId: string | null; candidateId: string; positionId: string; title: unknown; brief: unknown; guidelines?: unknown; driveLink?: unknown; attachment?: unknown; dueAt?: unknown }
 
 export interface AssignmentView {
   id: string; positionId: string; positionTitle: string | null; title: string; brief: string; guidelines: string | null; driveLink: string | null;
@@ -79,6 +80,9 @@ export async function sendAssignment(client: SupabaseClient, orgId: string, by: 
   const title = text(input.title, 200);
   const brief = text(input.brief, 8000);
   if (!title || !brief) throw new CandidateActionError(400, "Give the assignment a title and a brief.");
+  const attachment = BriefAttachmentSchema.nullish().safeParse(input.attachment);
+  if (!attachment.success) throw new CandidateActionError(400, "Choose a valid assignment attachment.");
+  if (attachment.data) await briefDownloadUrl(client, orgId, attachment.data);
   const driveLink = text(input.driveLink, 500);
   if (driveLink && !/^https?:\/\/\S+$/i.test(driveLink)) throw new CandidateActionError(400, "The Drive link must start with https://.");
   const due = typeof input.dueAt === "string" && input.dueAt ? new Date(input.dueAt) : null;
@@ -102,11 +106,13 @@ export async function sendAssignment(client: SupabaseClient, orgId: string, by: 
   }
   const { data: row, error } = await client.from(ASSIGNMENTS).insert({
     organization_id: orgId, candidate_id: input.candidateId, application_id: input.applicationId, position_id: input.positionId, link_id: link.id,
+    ...(attachment.data ? { brief_attachment: attachment.data } : {}),
     title, brief, guidelines: text(input.guidelines, 4000) || null, drive_link: driveLink || null, due_at: due?.toISOString() ?? null,
     sent_by: by.id ?? null, sent_by_name: by.name,
   }).select("id").single();
   if (error) {
     await client.from("recruitment_application_links").update({ disabled_at: new Date().toISOString() }).eq("id", link.id);
+    if (attachment.data && /brief_attachment/i.test(error.message)) throw new CandidateActionError(503, "Apply the assignment brief attachments migration (20261127000002) before sending files.");
     if (missing(error)) throw new CandidateActionError(503, ASSIGNMENT_MIGRATION_MESSAGE);
     throw new CandidateActionError(500, "The assignment could not be saved. Try again.");
   }

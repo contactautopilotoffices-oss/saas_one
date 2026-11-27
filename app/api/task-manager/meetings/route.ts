@@ -35,7 +35,7 @@ export async function POST(request: NextRequest) {
         const body = (await request.json().catch(() => null)) ?? {};
         if (body.action === 'bulk') return NextResponse.json({ success: true, ...(await MeetingService.bulk(guard.userId, guard.space, body.ids)) });
         const result = await MeetingService.create(guard.userId, {
-            title: body.title, attendeeIds: body.attendeeIds, extraNames: body.extraNames, confidential: body.confidential,
+            title: body.title, attendeeIds: body.attendeeIds, extraNames: body.extraNames, extraContacts: body.extraContacts, confidential: body.confidential,
             // Owner 2026-11-18: kind 'online' = a video call with its own link, optionally at a set time
             kind: body.kind, scheduledFor: body.scheduledFor,
             // Owner 2026-11-19: false = do not pull tasks out of this meeting (ticked by default)

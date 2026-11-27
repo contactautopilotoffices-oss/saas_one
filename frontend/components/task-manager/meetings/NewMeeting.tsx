@@ -2,7 +2,7 @@
 
 import React, { useMemo, useRef, useState } from 'react';
 import { AudioLines, CalendarClock, ListChecks, Loader2, Lock, Mic, Upload, Video, X } from 'lucide-react';
-import { call, meetingsUrl, type MeetingPerson, type MeetingSpace } from './api';
+import { call, meetingsUrl, type ExternalContact, type MeetingPerson, type MeetingSpace } from './api';
 import PeoplePicker from './PeoplePicker';
 import VoiceServerStatus from '../voice/VoiceServerStatus';
 import { useVoiceInfo } from '../voice/voiceApi';
@@ -29,6 +29,7 @@ export default function NewMeeting({ space, people, kind, onStarted, onOnlineCre
     const [title, setTitle] = useState(`Meeting – ${today}`);
     const [selected, setSelected] = useState<Set<string>>(new Set());
     const [extra, setExtra] = useState<string[]>([]);
+    const [extraContacts, setExtraContacts] = useState<ExternalContact[]>([]);
     const [confidential, setConfidential] = useState(false);
     /** Owner 2026-11-19: pull tasks out of the meeting (ticked by default) */
     const [findTasks, setFindTasks] = useState(true);
@@ -66,7 +67,7 @@ export default function NewMeeting({ space, people, kind, onStarted, onOnlineCre
             scheduledFor = t.toISOString();
         }
         setBusy('online');
-        const r = await call<{ id: string }>(meetingsUrl(space), { title, attendeeIds: [...selected], extraNames: extra, confidential, kind: 'online', scheduledFor, findTasks });
+        const r = await call<{ id: string }>(meetingsUrl(space), { title, attendeeIds: [...selected], extraNames: extra, extraContacts, confidential, kind: 'online', scheduledFor, findTasks });
         setBusy(null);
         if (!r.ok) { setError(r.error); return; }
         onOnlineCreated(r.id);
@@ -117,7 +118,10 @@ export default function NewMeeting({ space, people, kind, onStarted, onOnlineCre
 
             <div>
                 {/* Owner 2026-11-13: the same picker is used to add people during and after the meeting */}
-                <PeoplePicker people={people} selected={selected} extra={extra} onToggle={toggle} onExtraChange={setExtra} voiceOn={voiceOn} />
+                <PeoplePicker people={people} selected={selected} extra={extra} onToggle={toggle} onExtraChange={setExtra}
+                    extraContacts={kind === 'online' ? extraContacts : undefined}
+                    onExtraContactsChange={kind === 'online' ? setExtraContacts : undefined}
+                    voiceOn={voiceOn} />
 
                 {voiceOn && (
                     <div className="mt-3 space-y-1.5 rounded-xl border border-emerald-200 bg-emerald-50/50 px-3 py-2.5 dark:border-emerald-900 dark:bg-emerald-950/20">

@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useEffect, useMemo, useState } from 'react';
-import { ChevronLeft, ChevronRight, MapPin, RefreshCw, Users, Video } from 'lucide-react';
+import { CalendarDays, ChevronLeft, ChevronRight, Clock3, MapPin, RefreshCw, Users, Video } from 'lucide-react';
 import { INTERVIEW_STATUS_LABELS, type CalendarInterview, type RecruitmentDashboard } from '@/backend/lib/candidates/types';
 import { api, qs } from '@/frontend/components/candidates/api';
 import { Spinner } from '@/frontend/components/candidates/ui';
@@ -72,7 +72,10 @@ const LINE = 'border-[#262626]/10 dark:border-white/[.14]';
 const PAST = 'bg-[repeating-linear-gradient(135deg,rgba(38,38,38,.04)_0_6px,transparent_6px_12px)] dark:bg-[repeating-linear-gradient(135deg,rgba(255,255,255,.04)_0_6px,transparent_6px_12px)]';
 const VIEWS: Array<{ key: CalView; label: string }> = [{ key: 'day', label: 'Day' }, { key: 'week', label: 'Week' }, { key: 'month', label: 'Month' }];
 
-export default function HubInterviews({ orgId, data, onOpen }: { orgId: string; data: RecruitmentDashboard; onOpen: (view: RecruitmentView) => void }) {
+export default function HubInterviews({ orgId, data, onOpen, onInterview }: { orgId: string; data: RecruitmentDashboard; onOpen: (view: RecruitmentView) => void; onInterview: (id: string) => void }) {
+    const [calendarOpen, setCalendarOpen] = useState(false);
+    const [weekList, setWeekList] = useState<CalendarInterview[] | null>(null);
+    const [weekError, setWeekError] = useState('');
     const [view, setView] = useState<CalView>('week');
     const [now, setNow] = useState(nowMs);
     const [anchor, setAnchor] = useState(() => dayStart(nowMs()));
@@ -82,10 +85,22 @@ export default function HubInterviews({ orgId, data, onOpen }: { orgId: string; 
     const [picked, setPicked] = useState<string | null>(null);
     const { from, to } = rangeOf(view, anchor);
     const today = dayStart(now);
+    const weekFrom = rangeOf('week', today).from;
+    useEffect(() => {
+        const ctrl = new AbortController();
+        void api<{ interviews: CalendarInterview[] }>(`/api/candidates/interviews${qs({ orgId, from: new Date(weekFrom).toISOString(), to: new Date(weekFrom + 7 * DAY).toISOString() })}`, { signal: ctrl.signal }).then(res => {
+            if (ctrl.signal.aborted) return;
+            if (res.ok) { setWeekList(res.data.interviews); setWeekError(''); }
+            else setWeekError(res.error);
+        });
+        return () => ctrl.abort();
+    }, [orgId, weekFrom, nonce]);
     const atToday = rangeOf(view, today).from === from;
     // The interviews for the range on screen; null while that range is still loading.
     const fetchKey = `${orgId}|${from}|${to}|${nonce}`;
-    const list = loaded?.key === fetchKey ? loaded.items : null;
+    const currentWeek = from === weekFrom && to === weekFrom + 7 * DAY;
+    const list = currentWeek ? weekList : loaded?.key === fetchKey ? loaded.items : null;
+    const loadError = currentWeek ? weekError : error;
 
     // Keeps the red "now" line moving.
     useEffect(() => {
@@ -94,6 +109,7 @@ export default function HubInterviews({ orgId, data, onOpen }: { orgId: string; 
     }, []);
 
     useEffect(() => {
+        if (!calendarOpen || (from === weekFrom && to === weekFrom + 7 * DAY)) return;
         const ctrl = new AbortController();
         const key = `${orgId}|${from}|${to}|${nonce}`;
         void api<{ interviews: CalendarInterview[] }>(`/api/candidates/interviews${qs({ orgId, from: new Date(from).toISOString(), to: new Date(to).toISOString() })}`, { signal: ctrl.signal }).then(res => {
@@ -103,7 +119,7 @@ export default function HubInterviews({ orgId, data, onOpen }: { orgId: string; 
             setLoaded({ key, items: res.data.interviews });
         });
         return () => ctrl.abort();
-    }, [orgId, from, to, nonce]);
+    }, [orgId, from, to, nonce, calendarOpen, weekFrom]);
 
     // Interviews by the India-time day they start on, earliest first.
     const byDay = useMemo(() => {
@@ -286,8 +302,56 @@ export default function HubInterviews({ orgId, data, onOpen }: { orgId: string; 
         </div>
     );
 
+    const next = data.today.interviews.find(iv => iv.status === 'scheduled' && Date.parse(iv.at) >= now);
+    const nextInterview = weekList?.find(iv => iv.id === next?.id);
+    const nextRecord = nextInterview?.applicationId ?? null;
+    const week = data.interviewWeek;
+    const peak = Math.max(1, ...week.map(day => day.count));
+    const openDetails = (id: string) => { setPicked(id); setCalendarOpen(true); };
+
     return (
-        <div className="flex flex-col gap-4">
+        <div className="flex flex-col gap-3">
+            <div className="hub-split">
+                <section aria-label="Next interview" className="hub-interview-hero rounded-[26px] p-5 text-white">
+                    <p className="flex items-center gap-2 text-sm font-bold"><Clock3 className="size-4" aria-hidden />{next ? `Next up at ${time(next.at)}` : 'Next interview'}</p>
+                    <div className="my-4 flex items-center gap-3">
+                        {next && <span className="grid size-14 shrink-0 place-items-center rounded-2xl bg-white text-xl font-extrabold text-indigo-700">{initials(next.candidateName)}</span>}
+                        <div><h2 className="text-2xl font-extrabold">{next?.candidateName ?? 'No more interviews today'}</h2>{next && <p className="text-sm text-indigo-100">{[next.round, next.positionTitle].filter(Boolean).join(' · ')}</p>}</div>
+                    </div>
+                    <div className="flex flex-wrap gap-2">
+                        {nextInterview?.joinPath && <a href={nextInterview.joinPath} target="_blank" rel="noopener noreferrer" className="flex items-center gap-2 rounded-full bg-white px-4 py-2.5 text-sm font-bold text-indigo-800"><Video className="size-4" aria-hidden />Join the call</a>}
+                        {nextRecord && <button type="button" className="rounded-full bg-white px-4 py-2.5 text-sm font-bold text-indigo-800" onClick={() => onInterview(nextRecord)}>Open interviews & scorecards</button>}
+                        <button type="button" className="flex items-center gap-2 rounded-full border border-white/40 bg-white/15 px-4 py-2.5 text-sm font-bold" onClick={() => { setAnchor(today); setView('week'); if (next) setPicked(next.id); setCalendarOpen(true); }}><CalendarDays className="size-4" aria-hidden />View calendar</button>
+                    </div>
+                </section>
+                <section aria-label="Interviews this week" className={`${GLASS} p-5`}>
+                    <div className="flex items-baseline justify-between"><h2 className={H2}>Interviews this week</h2><strong className="text-2xl">{week.reduce((sum, day) => sum + day.count, 0)}</strong></div>
+                    <p className={`text-xs ${INK3}`}>{data.today.interviews.length} today · {data.today.scorecardsPending.length} scorecards overdue</p>
+                    <div className="mt-3 flex items-end justify-between gap-1">
+                        {week.map(day => {
+                            const date = Date.parse(day.date + 'T00:00:00+05:30');
+                            return <button key={day.date} type="button" onClick={() => { openDay(date); setCalendarOpen(true); }} className="flex min-w-0 flex-1 flex-col items-center justify-end gap-1 rounded-lg py-1 text-xs font-bold hover:bg-indigo-500/10" aria-label={`${dayLabel(date, { weekday: 'long' })}: ${plural(day.count, 'interview', 'interviews')}`}><span>{day.count}</span><span aria-hidden className={`w-3/5 max-w-8 rounded-md ${date === today ? 'bg-indigo-600' : 'bg-indigo-300'}`} style={{ height: Math.max(3, day.count / peak * 68) }} /><span>{dayLabel(date, { weekday: 'short' })}</span></button>;
+                        })}
+                    </div>
+                </section>
+            </div>
+            <div className="grid gap-3 lg:grid-cols-3">
+                <section aria-label="Today's line-up" className={`${GLASS} p-5`}><h2 className={H2}>Today&apos;s line-up</h2>
+                    {!data.today.interviews.length && <p className={`mt-2 text-sm ${INK3}`}>No interviews today.</p>}
+                    {data.today.interviews.slice(0, 6).map(iv => <button type="button" key={iv.id} onClick={() => { openDay(today); openDetails(iv.id); }} className={`mt-1 flex w-full items-center gap-2 rounded-xl p-2 text-left ${ROW_HOVER}`}><span className={`grid size-9 shrink-0 place-items-center rounded-xl text-xs font-bold ${TONE.b}`}>{initials(iv.candidateName)}</span><span className="min-w-0 grow"><strong className="block truncate text-sm">{iv.candidateName}</strong><span className={`block truncate text-xs ${INK3}`}>{iv.round} · {iv.positionTitle}</span></span><strong className="shrink-0 text-xs">{time(iv.at)}</strong></button>)}
+                </section>
+                <section aria-label="Coming up this week" className={`${GLASS} p-5`}><h2 className={H2}>Coming up this week</h2>
+                    {weekList === null ? <p className={`mt-2 text-sm ${INK3}`}>{weekError || 'Loading this week'}</p> : weekList.filter(iv => Date.parse(iv.at) >= today + DAY && iv.status === 'scheduled').slice(0, 5).map(iv => <button type="button" key={iv.id} onClick={() => { openDay(dayStart(Date.parse(iv.at))); openDetails(iv.id); }} className={`mt-1 flex w-full items-center gap-2 rounded-xl p-2 text-left ${ROW_HOVER}`}><span className={`grid h-10 w-12 shrink-0 place-items-center rounded-xl text-xs font-bold ${TONE.b}`}>{dayLabel(Date.parse(iv.at), { day: 'numeric', month: 'short' })}</span><span className="min-w-0 grow"><strong className="block truncate text-sm">{iv.candidateName}</strong><span className={`block truncate text-xs ${INK3}`}>{time(iv.at)} · {roundLine(iv)}</span></span></button>)}
+                    {weekList !== null && !weekList.some(iv => Date.parse(iv.at) >= today + DAY && iv.status === 'scheduled') && <p className={`mt-2 text-sm ${INK3}`}>No further interviews scheduled this week.</p>}
+                </section>
+                <section aria-label="Scorecards overdue" className={`${GLASS} p-5`}><h2 className={H2}>Scorecards overdue</h2>
+                    {!data.today.scorecardsPending.length && <p className={`mt-2 text-sm ${INK3}`}>Every scorecard is in.</p>}
+                    {data.today.scorecardsPending.slice(0, 6).map((card, i) => <div key={i} className="mt-2 flex items-center gap-2 rounded-xl p-2"><span className={`grid size-8 shrink-0 place-items-center rounded-xl ${TONE.c}`}><Clock3 className="size-4" aria-hidden /></span><span className="min-w-0"><strong className="block truncate text-sm">{card.panelName ?? 'Interviewer'}</strong><span className={`block truncate text-xs ${INK3}`}>For {card.candidateName}</span></span></div>)}
+                </section>
+            </div>
+            <details open={calendarOpen} onToggle={event => setCalendarOpen(event.currentTarget.open)}>
+                <summary className="w-fit cursor-pointer rounded-full bg-white px-4 py-2.5 text-sm font-bold dark:bg-white/10">Interview calendar</summary>
+                {calendarOpen && <div className="mt-3 space-y-3">
             <section aria-label="Interview calendar" className={`${GLASS} p-[22px]`}>
                 <div className="mb-3 grid grid-cols-1 items-center gap-3 md:grid-cols-[1fr_auto_1fr]">
                     <div role="group" aria-label="Calendar view" className={`inline-flex justify-self-start rounded-full p-1 ${TRACK}`}>
@@ -320,8 +384,8 @@ export default function HubInterviews({ orgId, data, onOpen }: { orgId: string; 
                     <span className={`rounded-full border-l-[3px] border-current px-3 py-1 text-xs font-bold ${TONE.c}`}>No-show</span>
                 </div>
 
-                {error ? (
-                    <div className="flex flex-wrap items-center gap-3" role="alert"><p className="m-0 grow text-sm font-semibold">{error}</p><button type="button" onClick={() => setNonce(n => n + 1)} className={`${BTN} ${CALM} ${FOCUS}`}><RefreshCw className="h-4 w-4" aria-hidden />Try again</button></div>
+                {loadError ? (
+                    <div className="flex flex-wrap items-center gap-3" role="alert"><p className="m-0 grow text-sm font-semibold">{loadError}</p><button type="button" onClick={() => setNonce(n => n + 1)} className={`${BTN} ${CALM} ${FOCUS}`}><RefreshCw className="h-4 w-4" aria-hidden />Try again</button></div>
                 ) : view === 'month' ? monthGrid : timeGrid}
                 <p className={`mb-0 mt-3 text-xs ${INK3}`}>
                     {view === 'month'
@@ -345,6 +409,8 @@ export default function HubInterviews({ orgId, data, onOpen }: { orgId: string; 
                                 <div><dt className={`text-xs font-bold ${INK3}`}>Panel</dt><dd className="m-0 flex items-center gap-1.5 font-bold"><Users className="h-4 w-4 shrink-0" aria-hidden /><span className="truncate">{sel.panel.length ? sel.panel.join(', ') : 'Not set'}</span></dd></div>
                             </dl>
                             <div className="mt-4 flex flex-wrap gap-2.5">
+                                {sel.status === 'scheduled' && sel.joinPath && <a href={sel.joinPath} target="_blank" rel="noopener noreferrer" className={BTN}>Join the call</a>}
+                                {sel.applicationId && <button type="button" onClick={() => onInterview(sel.applicationId!)} className={BTN}>Open interviews & scorecards</button>}
                                 <button type="button" onClick={() => onOpen('pipeline')} className={`${BTN} ${CALM} ${FOCUS}`}>Open the pipeline</button>
                             </div>
                         </>
@@ -368,20 +434,10 @@ export default function HubInterviews({ orgId, data, onOpen }: { orgId: string; 
                     )}
                 </section>
 
-                <section aria-label="Scorecards still to come in" className={`${GLASS} min-w-0 flex-[1_1_320px] p-[22px]`}>
-                    <div className="mb-2 flex flex-wrap items-baseline gap-2.5"><h2 className={`${H2} grow`}>Scorecards still to come in</h2><span className={`text-[13px] ${INK3}`}>{data.today.scorecardsPending.length}</span></div>
-                    {data.today.scorecardsPending.length === 0 && <p className={`m-0 text-sm ${INK3}`}>Every scorecard is in.</p>}
-                    <div className="flex flex-col gap-1">
-                        {data.today.scorecardsPending.slice(0, 8).map((s, k) => (
-                            <div key={`${s.interviewId}-${k}`} className="flex items-center gap-3 rounded-2xl p-2">
-                                <span className={`flex h-[38px] w-[38px] shrink-0 items-center justify-center rounded-[13px] text-xs font-extrabold ${TONE.a}`}>{dayLabel(new Date(s.at).getTime(), { day: 'numeric' })}</span>
-                                <span className="block min-w-0 flex-1"><span className="block truncate font-extrabold">{s.panelName ?? 'An interviewer'}</span><span className={`block truncate text-xs ${INK3}`}>for {s.candidateName} · {s.round ?? 'Interview'}</span></span>
-                            </div>
-                        ))}
-                    </div>
-                    <p className={`mb-0 mt-2 text-xs ${INK3}`}>The app already reminds interviewers on its own; this is who it is still waiting for.</p>
-                </section>
+
             </div>
+                </div>}
+            </details>
         </div>
     );
 }

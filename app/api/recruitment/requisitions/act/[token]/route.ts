@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 
 import { getCandidatesAdmin } from "@/backend/lib/candidates/access";
+import { escapeReviewText as esc, reviewPage } from "@/backend/lib/candidates/review-page";
 import { CandidateActionError } from "@/backend/lib/candidates/records";
 import { defaultNotifyDeps, mobilityText, requisitionNotifier, type LinkSummary } from "@/backend/lib/candidates/requisition-notify";
 import { decideRequisition } from "@/backend/lib/candidates/requisitions";
@@ -17,7 +18,6 @@ export const dynamic = "force-dynamic";
 const ENTITY = "recruitment_requisition";
 
 const html = (body: string, status = 200) => new NextResponse(body, { status, headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" } });
-const esc = (s: unknown) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c] as string));
 const lpa = (v: number | null) => (v === null ? "—" : `₹${(v / 100_000).toLocaleString("en-IN", { maximumFractionDigits: 1 })} LPA`);
 
 function decisionPage(summary: LinkSummary, level: ApprovalLevel, error: string | null, chosen: string, reason: string): string {
@@ -35,39 +35,25 @@ function decisionPage(summary: LinkSummary, level: ApprovalLevel, error: string 
   ];
   const choice = (value: string, label: string, hint: string) =>
     `<label class="opt"><input type="radio" name="decision" value="${value}" ${chosen === value ? "checked" : ""} required><span><b>${label}</b><small>${hint}</small></span></label>`;
-  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Hiring request ${esc(summary.requisitionNo)}</title>
-<style>
-body{margin:0;background:#f1f5f9;font:16px/1.5 system-ui,-apple-system,Segoe UI,Roboto,sans-serif;color:#0f172a}
-main{max-width:560px;margin:0 auto;padding:20px 16px 48px}
-.card{background:#fff;border-radius:16px;padding:20px;box-shadow:0 1px 3px rgba(15,23,42,.08)}
-h1{font-size:20px;margin:0 0 4px}p{margin:8px 0}
-table{border-collapse:collapse;width:100%;font-size:14px;margin:12px 0}td{padding:6px 0;vertical-align:top}td:first-child{color:#64748b;width:38%}
-.just{white-space:pre-wrap;background:#f8fafc;border-radius:10px;padding:10px;font-size:14px}
-.opt{display:flex;gap:10px;align-items:flex-start;padding:10px 12px;border:1px solid #e2e8f0;border-radius:12px;margin:8px 0;cursor:pointer}.opt input{margin-top:5px}.opt small{display:block;color:#64748b}
-.plan{display:flex;gap:10px;align-items:flex-start;background:#fffbeb;border:1px solid #fde68a;border-radius:12px;padding:12px;margin:12px 0}.plan input{margin-top:5px}
-textarea{width:100%;box-sizing:border-box;border:1px solid #cbd5e1;border-radius:10px;padding:10px;font:inherit;min-height:80px}
-.btn{display:block;width:100%;margin-top:14px;background:#1e293b;color:#fff;border:0;border-radius:12px;padding:14px;font:inherit;font-weight:700;cursor:pointer}
-.err{background:#fef2f2;border:1px solid #fecaca;color:#991b1b;border-radius:10px;padding:10px;font-size:14px}
-.muted{color:#64748b;font-size:13px}
-</style></head><body><main><div class="card">
+  return reviewPage("Hiring request approval", `<section class="rf-card rf-hero"><p class="rf-kicker">Hiring request approval</p>
 <h1>Hiring request ${esc(summary.requisitionNo)}</h1>
 <p class="muted">Your decision as ${esc(APPROVAL_LEVEL_LABELS[level])}. Nothing is recorded until you press the button.</p>
-${error ? `<p class="err">${esc(error)}</p>` : ""}
-<table>${rows.map(([k, v]) => `<tr><td>${esc(k)}</td><td>${esc(v)}</td></tr>`).join("")}</table>
+${error ? `<p class="err" role="alert">${esc(error)}</p>` : ""}
+</section><section class="rf-card"><h2>Request details</h2><table>${rows.map(([k, v]) => `<tr><td>${esc(k)}</td><td>${esc(v)}</td></tr>`).join("")}</table>
 <p class="muted">Justification</p><div class="just">${esc(summary.justification ?? "—")}</div>
 ${summary.structureNote ? `<p class="muted">Place in the current structure</p><div class="just">${esc(summary.structureNote)}</div>` : ""}
-<form method="POST" action="">
+</section><section class="rf-card"><form method="POST" action=""><fieldset><legend>Your decision</legend>
 ${choice("approve", "Approve", level === "hod" ? "It goes on to the HR Head." : level === "hr_head" ? "In plan: the role opens. Out of plan or above the CTC level: it goes to the Director." : "The role opens.")}
 ${choice("send_back", "Send back for change", "The manager changes the request and submits it again. Say what needs to change.")}
 ${choice("hold", "Put on hold", "It waits until an approver resumes it. Give the reason.")}
 ${choice("reject", "Reject", "Final. Give the reason.")}
 ${level === "hr_head" ? `<div class="plan"><input type="checkbox" name="in_plan" value="1" id="in_plan"><label for="in_plan"><b>This role is in the approved headcount plan</b><br><small class="muted">Tick it before approving. Unticked, the request goes to the Director.</small></label></div>` : ""}
-<label class="muted" for="reason">Reason or note</label>
+</fieldset><label class="muted" for="reason">Reason or note</label>
 <textarea id="reason" name="reason" maxlength="2000" placeholder="Required for Reject, Send back and Hold">${esc(reason)}</textarea>
-<button class="btn" type="submit">Record my decision</button>
+<button class="rf-primary" type="submit">Record my decision</button>
 </form>
 <p class="muted">This link works once. To change your mind afterwards, use the app under Hiring requests.</p>
-</div></main></body></html>`;
+</section>`);
 }
 
 type Peek = { entityType: string; action: string; payload: Record<string, unknown> };

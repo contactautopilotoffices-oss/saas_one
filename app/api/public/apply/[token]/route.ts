@@ -24,8 +24,14 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
   if (limited) return limited;
   const { token } = await params;
   try {
-    const form = await publicForm(getCandidatesAdmin(), token);
+    const download = request.nextUrl.searchParams.get("download") === "brief";
+    const form = await publicForm(getCandidatesAdmin(), token, download);
     if (!form) return NextResponse.json({ error: "This application link is no longer open." }, { status: 404, headers: noStore });
+    if (download) {
+      const url = form.assignment?.downloadUrl;
+      return url ? NextResponse.redirect(url, { status: 302, headers: { ...noStore, "Referrer-Policy": "no-referrer" } })
+        : NextResponse.json({ error: "This assignment has no attachment." }, { status: 404, headers: noStore });
+    }
     return NextResponse.json(form, { headers: noStore });
   } catch (error) {
     console.error("[apply] open failed", error);

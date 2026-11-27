@@ -15,6 +15,12 @@ import type { MeetingSpace } from './visibility';
 export type MeetingKind = 'room' | 'online';
 export const ONLINE_STATUSES = ['scheduled', 'live'] as const;
 
+export interface ExternalContact {
+    name: string;
+    phone?: string | null;
+    email?: string | null;
+}
+
 /** Where the call's state lives (meeting_notes.online). Every field is optional so older or partial rows still read. */
 export interface OnlineState {
     room: string;
@@ -40,6 +46,11 @@ export interface OnlineState {
     guestToken?: string | null;
     /** Stage 2: everyone who asked to join through the guest link */
     guests?: GuestEntry[];
+    /** Optional phone/email details for typed external attendees (kept alongside `extra_names`). */
+    externalContacts?: ExternalContact[];
+    /** Last "Send meeting link" timestamp and recipient count. */
+    linkSentAt?: string | null;
+    linkSentCount?: number | null;
 }
 
 /**
@@ -224,4 +235,54 @@ export function decideGuest(g: GuestEntry, decision: 'admit' | 'deny' | 'remove'
     if (decision === 'remove' && g.state !== 'admitted') return null;
     const state: GuestState = decision === 'admit' ? 'admitted' : decision === 'deny' ? 'denied' : 'removed';
     return { ...g, state, decidedAt: now, decidedBy: by };
+}
+
+const SIMPLE_EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+/**
+ * Normalises optional phone/email contacts for typed external names (`extraNames`).
+ * When `rawContacts` is undefined, keeps existing contacts whose name remains in `extraNames`.
+ * Throws a plain sentence if a provided phone number or email address is invalid.
+ */
+export function normalizeExternalContacts(
+    extraNames: string[],
+    rawContacts: unknown,
+    existingContacts: ExternalContact[] = [],
+): ExternalContact[] {
+    const allowed = new Map(extraNames.map(n => [n.toLowerCase(), n]));
+    if (rawContacts === undefined) {
+        return existingContacts.filter(c => allowed.has(c.name.toLowerCase()) && (c.phone || c.email));
+    }
+    if (!Array.isArray(rawContacts)) return [];
+    const byName = new Map<string, ExternalContact>();
+    for (const item of rawContacts) {
+        if (!item || typeof item !== 'object') continue;
+        const r = item as Record<string, unknown>;
+        const nameKey = typeof r.name === 'string' ? r.name.replace(/\s+/g, ' ').trim().toLowerCase() : '';
+        const canonical = allowed.get(nameKey);
+        if (!canonical) continue;
+
+        let phone: string | null = null;
+        if (typeof r.phone === 'string' && r.phone.trim()) {
+            const cleaned = r.phone.trim();
+            const digits = cleaned.replace(/\D/g, '');
+            if (digits.length < 10 || digits.length > 15) {
+                throw new Error(`Enter a valid 10–15 digit phone number for ${canonical}.`);
+            }
+            phone = cleaned.slice(0, 24);
+        }
+
+        let email: string | null = null;
+        if (typeof r.email === 'string' && r.email.trim()) {
+            const cleaned = r.email.trim().toLowerCase();
+            if (cleaned.length > 254 || !SIMPLE_EMAIL.test(cleaned)) {
+                throw new Error(`Enter a valid email address for ${canonical}.`);
+            }
+            email = cleaned;
+        }
+
+        if (phone || email) byName.set(nameKey, { name: canonical, phone, email });
+        else byName.delete(nameKey);
+    }
+    return [...byName.values()];
 }

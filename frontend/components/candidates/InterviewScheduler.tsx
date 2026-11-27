@@ -440,8 +440,26 @@ function InterviewFollowUp({ orgId, interview: i, onChanged }: { orgId: string; 
     const [moving, setMoving] = useState(false);
     const [at, setAt] = useState(i.at);
     const [reason, setReason] = useState('');
+    const [manualCopy, setManualCopy] = useState<{ id: string; url: string } | null>(null);
     if (!i.followUpId) return null;
     const status = i.status ?? 'scheduled';
+    const share = async (scorecardId: string, action: 'copy' | 'email') => {
+        setBusy(true);
+        try {
+            const res = await api<{ url?: string; email?: string }>('/api/candidates/interviews/follow-up', { json: { orgId, scorecardId, action } });
+            if (!res.ok) { notify(res.error, 'error'); return; }
+            if (res.data.url) {
+                try {
+                    await navigator.clipboard.writeText(res.data.url);
+                    setManualCopy(null);
+                    notify('Scorecard link copied', 'success');
+                } catch {
+                    setManualCopy({ id: scorecardId, url: res.data.url });
+                    notify('Select and copy the scorecard link below.', 'info');
+                }
+            } else if (res.data.email) notify(`Scorecard link emailed to ${res.data.email}`, 'success');
+        } finally { setBusy(false); }
+    };
     const patch = async (json: Record<string, unknown>, done: string) => {
         setBusy(true);
         const res = await api<{ told?: number }>('/api/candidates/interviews/follow-up', { method: 'PATCH', json: { orgId, id: i.followUpId, ...json } });
@@ -478,12 +496,19 @@ function InterviewFollowUp({ orgId, interview: i, onChanged }: { orgId: string; 
             )}
             {cards.length > 0 && (
                 <div className="mt-2">
-                    <p className={LABEL}>Scorecards · {submitted.length} of {cards.length} in</p>
+                    <p className={LABEL}>Optional scorecards · {submitted.length} of {cards.length} in</p>
                     <ul className="mt-1 space-y-1">
                         {cards.map(c => (
                             <li key={c.id} className="text-xs text-text-primary">
                                 <span className="font-semibold">{c.panelName ?? 'Interviewer'}</span>{' · '}
-                                {c.submittedAt ? <>{c.overall}/5 · {c.recommendation ? RECOMMENDATION_LABELS[c.recommendation] : '—'}{Object.keys(c.ratings).length > 0 && <span className="text-text-secondary"> ({Object.entries(c.ratings).map(([k, v]) => `${k} ${v}`).join(', ')})</span>}{c.comments && <span className="block italic text-text-secondary">“{c.comments}”</span>}</> : <span className="text-text-tertiary">waiting (the link is in their invite; reminders go at 24 h and 48 h)</span>}
+                                {c.submittedAt ? <>{c.overall}/5 · {c.recommendation ? RECOMMENDATION_LABELS[c.recommendation] : '—'}{Object.keys(c.ratings).length > 0 && <span className="text-text-secondary"> ({Object.entries(c.ratings).map(([k, v]) => `${k} ${v}`).join(', ')})</span>}{c.comments && <span className="block italic text-text-secondary">“{c.comments}”</span>}</> : <>
+                                    <span className="text-text-tertiary">Awaiting feedback</span>
+                                    {(status === 'scheduled' || status === 'done') && <span className="ml-2 inline-flex flex-wrap gap-1">
+                                        <button type="button" disabled={busy} className={BTN_GHOST} onClick={() => void share(c.id, 'copy')}>Copy scorecard link</button>
+                                        <button type="button" disabled={busy} className={BTN_GHOST} onClick={() => void share(c.id, 'email')}>Resend by email</button>
+                                    </span>}
+                                    {manualCopy?.id === c.id && <input readOnly value={manualCopy.url} aria-label={`Scorecard link for ${c.panelName ?? 'interviewer'}`} onFocus={e => e.currentTarget.select()} className={`${INPUT} mt-1 w-full`} />}
+                                </>}
                             </li>
                         ))}
                     </ul>

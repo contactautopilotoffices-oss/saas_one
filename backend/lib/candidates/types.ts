@@ -1464,6 +1464,11 @@ export interface OfferHandover {
 
 /** The dashboard (spec: Today, Roles, Funnel). */
 export interface RecruitmentDashboard {
+  activeCandidates: number;
+  interviewWeek: { date: string; count: number }[];
+  activity?: { openings: number[]; candidateMoves: number[]; offers: number[] };
+  offersInPlay?: (RecruitmentDashboard["today"]["offersAwaiting"][number] & { joiningDate: string | null })[];
+  spotlight?: { record: CandidateRecord; position: Position; member: PositionMember; column: string }[];
   today: {
     interviews: { id: string; candidateName: string; round: string | null; positionTitle: string | null; at: string; mode: string | null; status: InterviewStatus }[];
     scorecardsPending: { interviewId: string; candidateName: string; panelName: string | null; round: string | null; at: string }[];
@@ -1491,6 +1496,8 @@ export interface RecruitmentDashboard {
 export interface CalendarInterview {
   id: string;
   candidateId: string;
+  applicationId: string | null;
+  joinPath: string | null;
   candidateName: string;
   positionTitle: string | null;
   round: string | null;

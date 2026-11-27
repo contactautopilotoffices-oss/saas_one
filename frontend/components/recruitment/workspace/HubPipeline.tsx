@@ -24,8 +24,8 @@ export default function HubPipeline({ data, onOpen }: { data: RecruitmentDashboa
     const allInPipeline = data.roles.reduce((n, r) => n + r.inPipeline, 0);
 
     const chips = [
-        { id: 'all', label: 'All roles', sub: plural(data.roles.length, 'open role', 'open roles'), n: allInPipeline, color: '#353535' },
-        ...data.roles.map(r => ({ id: r.id, label: r.title, sub: [r.location, r.recruiterName ?? 'No recruiter'].filter(Boolean).join(' · '), n: r.inPipeline, color: r.ageing ? '#f87171' : r.daysOpen >= r.targetDays * 0.8 ? '#f59e0b' : '#8c7957' })),
+        { id: 'all', label: 'All roles', sub: plural(data.roles.length, 'open role', 'open roles'), n: allInPipeline, color: '#5145e4' },
+        ...data.roles.map(r => ({ id: r.id, label: r.title, sub: [r.location, r.recruiterName ?? 'No recruiter'].filter(Boolean).join(' · '), n: r.inPipeline, color: r.ageing ? '#f87171' : r.daysOpen >= r.targetDays * 0.8 ? '#f59e0b' : '#5145e4' })),
     ];
 
     const aging = data.roles.slice(0, 8);
@@ -36,7 +36,7 @@ export default function HubPipeline({ data, onOpen }: { data: RecruitmentDashboa
     }
 
     return (
-        <div className="flex flex-col gap-4">
+        <div className="flex flex-col gap-3">
             <div role="group" aria-label="Pick a role" className="flex gap-2.5 overflow-x-auto px-0.5 pb-1.5 pt-0.5">
                 {chips.map(c => {
                     const on = c.id === roleId;
@@ -47,7 +47,7 @@ export default function HubPipeline({ data, onOpen }: { data: RecruitmentDashboa
                             onClick={() => setRoleId(c.id)}
                             aria-pressed={on}
                             className={`flex min-h-14 shrink-0 items-center gap-3 rounded-[20px] border py-2 pl-2.5 pr-4 text-left backdrop-blur-[24px] transition-[transform,background-color,color] duration-300 hover:-translate-y-0.5 ${on
-                                ? 'border-[#353535] bg-[#353535] text-white shadow-[0_12px_28px_rgba(53,53,53,.25)]'
+                                ? 'border-[#5145e4] bg-[#5145e4] text-white shadow-[0_12px_28px_rgba(53,53,53,.25)]'
                                 : 'border-white/95 bg-white/65 dark:border-white/[.13] dark:bg-white/[.07]'}`}
                         >
                             <span aria-hidden className="h-[34px] w-2 shrink-0 rounded" style={{ background: on ? '#ffffff' : c.color }} />
@@ -75,9 +75,9 @@ export default function HubPipeline({ data, onOpen }: { data: RecruitmentDashboa
                                 {columns.map((name, i) => {
                                     const [bg, fg] = stageFill(i);
                                     return (
-                                        <div key={name} className="flex h-[74px] flex-col justify-center rounded-[20px] px-3.5 py-3" style={{ flex: `${Math.max(1, counts[i])} 1 92px`, background: bg, color: fg }}>
+                                        <div key={name} className="flex h-[62px] min-w-0 flex-col justify-center rounded-[16px] px-3.5 py-2" style={{ flex: `${Math.max(1, counts[i])} 1 92px`, background: bg, color: fg }}>
                                             <div className="text-2xl font-extrabold leading-none tabular-nums">{counts[i]}</div>
-                                            <div className="mt-1 truncate text-[13px] font-bold" title={name}>{name}</div>
+                                            <div className="mt-1 truncate text-[13px] font-bold leading-tight" title={name}>{name}</div>
                                         </div>
                                     );
                                 })}
@@ -96,7 +96,7 @@ export default function HubPipeline({ data, onOpen }: { data: RecruitmentDashboa
                 </div>
             </section>
 
-            <div className="flex flex-wrap items-stretch gap-4">
+            <div className="hub-split">
                 <section aria-label="Hiring pipeline by role" className={`${GLASS} min-w-0 flex-[1.6_1_520px] p-[22px]`}>
                     <div className="mb-3.5 flex flex-wrap items-center gap-3">
                         <h2 className={`${H2} grow`}>Hiring pipeline by role</h2>
@@ -106,7 +106,7 @@ export default function HubPipeline({ data, onOpen }: { data: RecruitmentDashboa
                     </div>
                     {data.roles.length === 0 && <p className={`m-0 text-sm ${INK3}`}>No open roles.</p>}
                     <div className="overflow-x-auto">
-                        <div className="flex min-w-[600px] flex-col gap-1.5">
+                        <div className="flex min-w-[440px] flex-col gap-1.5">
                             {data.roles.map(r => (
                                 <button
                                     key={r.id}
@@ -115,7 +115,7 @@ export default function HubPipeline({ data, onOpen }: { data: RecruitmentDashboa
                                     aria-pressed={r.id === roleId}
                                     className={`flex items-center gap-3.5 rounded-2xl px-2 py-1.5 text-left ${ROW_HOVER} ${roleId !== 'all' && r.id !== roleId ? 'opacity-50' : ''}`}
                                 >
-                                    <span className="block w-[170px] shrink-0">
+                                    <span className="block w-[145px] shrink-0">
                                         <span className="block truncate font-extrabold">{r.title}</span>
                                         <span className={`block text-xs ${INK3}`}>{plural(r.inPipeline, 'person', 'people')} · {r.daysOpen} days open</span>
                                     </span>
@@ -127,9 +127,9 @@ export default function HubPipeline({ data, onOpen }: { data: RecruitmentDashboa
                                                 <span
                                                     key={i}
                                                     title={`${columns[i]}: ${n}`}
-                                                    className="flex h-10 items-center justify-center text-[13px] font-extrabold tabular-nums"
+                                                    className="flex h-8 items-center justify-center text-[13px] font-extrabold tabular-nums"
                                                     style={{
-                                                        flex: `${Math.max(1, n)} 1 46px`,
+                                                        flex: `${Math.max(1, n)} 1 24px`,
                                                         // An empty column stays as a faint grey step, so the row keeps its shape.
                                                         background: n ? bg : 'rgba(130,130,125,.16)',
                                                         color: n ? fg : 'inherit',
@@ -158,7 +158,7 @@ export default function HubPipeline({ data, onOpen }: { data: RecruitmentDashboa
                     {aging.length === 0 && <p className={`m-0 text-sm ${INK3}`}>No open roles.</p>}
                     {aging.map(r => {
                         const tone: Tone = r.ageing ? 'c' : r.daysOpen >= r.targetDays * 0.8 ? 'a' : 'v';
-                        const bar = r.ageing ? '#f87171' : tone === 'a' ? '#f59e0b' : '#353535';
+                        const bar = r.ageing ? '#f87171' : tone === 'a' ? '#f59e0b' : '#5145e4';
                         return (
                             <button key={r.id} type="button" onClick={() => setRoleId(r.id)} className={`flex w-full items-center gap-3 rounded-2xl p-2 text-left ${ROW_HOVER}`}>
                                 <span className={`w-14 shrink-0 rounded-[14px] py-[9px] text-center text-[13px] font-extrabold tabular-nums ${TONE[tone]}`}>{r.daysOpen}d</span>

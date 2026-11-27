@@ -2,7 +2,7 @@
 
 import React, { useState } from 'react';
 import { Check, Loader2, Users, X } from 'lucide-react';
-import { call, meetingUrl, type MeetingPerson, type MeetingSpace } from './api';
+import { call, meetingUrl, type ExternalContact, type MeetingPerson, type MeetingSpace } from './api';
 import PeoplePicker from './PeoplePicker';
 
 /**
@@ -10,19 +10,21 @@ import PeoplePicker from './PeoplePicker';
  * Used while recording (someone walked in) and on the finished meeting. Saves with the `update_attendees` action; a
  * save that fails for lack of signal keeps the sheet open with the choice intact, so nothing is lost by tapping again.
  */
-export interface Attendees { attendees: Array<{ id: string; name: string }>; extraNames: string[] }
+export interface Attendees { attendees: Array<{ id: string; name: string }>; extraNames: string[]; extraContacts?: ExternalContact[] }
 
-export default function AttendeesEditor({ space, meetingId, people, current, onSaved, onClose }: {
+export default function AttendeesEditor({ space, meetingId, people, current, allowContacts = false, onSaved, onClose }: {
     space: MeetingSpace;
     meetingId: string;
     people: MeetingPerson[];
     current: Attendees;
+    allowContacts?: boolean;
     /** `canRewrite`: the notes already exist and can be written again with the new people */
     onSaved: (next: Attendees & { canRewrite: boolean }) => void;
     onClose: () => void;
 }) {
     const [selected, setSelected] = useState<Set<string>>(new Set(current.attendees.map(a => a.id)));
     const [extra, setExtra] = useState<string[]>(current.extraNames);
+    const [extraContacts, setExtraContacts] = useState<ExternalContact[]>(current.extraContacts ?? []);
     const [saving, setSaving] = useState(false);
     const [error, setError] = useState<string | null>(null);
 
@@ -32,10 +34,13 @@ export default function AttendeesEditor({ space, meetingId, people, current, onS
         if (saving) return;
         setSaving(true);
         setError(null);
-        const r = await call<Attendees & { canRewrite: boolean }>(meetingUrl(meetingId, space), { action: 'update_attendees', attendeeIds: [...selected], extraNames: extra }, { timeoutMs: 20_000 });
+        const r = await call<Attendees & { canRewrite: boolean }>(meetingUrl(meetingId, space), {
+            action: 'update_attendees', attendeeIds: [...selected], extraNames: extra,
+            ...(allowContacts ? { extraContacts } : {}),
+        }, { timeoutMs: 20_000 });
         setSaving(false);
         if (!r.ok) { setError(r.error); return; }
-        onSaved({ attendees: r.attendees, extraNames: r.extraNames, canRewrite: r.canRewrite });
+        onSaved({ attendees: r.attendees, extraNames: r.extraNames, extraContacts: r.extraContacts, canRewrite: r.canRewrite });
     };
 
     return (
@@ -52,7 +57,10 @@ export default function AttendeesEditor({ space, meetingId, people, current, onS
                     <button type="button" onClick={onClose} disabled={saving} aria-label="Close" className="-mr-1 rounded-full p-2 text-zinc-500 hover:bg-zinc-100 dark:hover:bg-zinc-800"><X className="h-5 w-5" /></button>
                 </div>
                 <div className="min-h-0 flex-1 overflow-y-auto px-5 sm:px-6">
-                    <PeoplePicker people={people} selected={selected} extra={extra} onToggle={toggle} onExtraChange={setExtra} listClassName="max-h-[40vh]" />
+                    <PeoplePicker people={people} selected={selected} extra={extra} onToggle={toggle} onExtraChange={setExtra}
+                        extraContacts={allowContacts ? extraContacts : undefined}
+                        onExtraContactsChange={allowContacts ? setExtraContacts : undefined}
+                        listClassName="max-h-[40vh]" />
                 </div>
                 <div className="space-y-2 p-5 pt-3 pb-[max(1.25rem,env(safe-area-inset-bottom))] sm:p-6 sm:pt-3">
                     {error && <p className="rounded-xl bg-red-50 px-3 py-2 text-xs font-semibold text-red-700 dark:bg-red-950/40 dark:text-red-300">{error} Your choice is kept — tap Save again.</p>}

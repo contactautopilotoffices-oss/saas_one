@@ -11,13 +11,15 @@ import {
 } from '../meetings/MeetingExtractor';
 import { canSee, isMeetingSpace, spacesForMemberships, spacesForRoles } from '../meetings/visibility';
 import { MEETING_NOTES_CAMPAIGN, notesParams, notesPreview } from '../meetings/meetingNotesMessage';
+import { MEETING_LINK_CAMPAIGN, linkEmailHtml, linkEmailSubject, linkParams, linkPreview, meetingWhenLabel } from '../meetings/meetingLinkMessage';
 import { applyNames, fileIndexFor, segmentsFor, voiceLabels } from '../meetings/MeetingSpeakers';
 import { embed as voiceEmbed, health as voiceHealth, identify as voiceIdentify, voiceIdConfig } from '../voice/VoiceIdClient';
 import { mergeCapture, missingFromCapture, reportedSegments } from '../meetings/capture';
 import {
     LIVE_GIVE_UP_MS, MAX_CALL_RECORDINGS, RECORDER_LEASE_MS, UPLOAD_GRACE_MS, callOutcome, canJoin, missingCallPieces, onlineSetupGaps,
     parseScheduledFor, recorderDecision, roomNameFor, type CallRecording,
-    MAX_WAITING, cleanGuestName, decideGuest, guestIdentity, guestPathFor, guestsForStaff, isGuestToken, meetingLinkPath, type GuestEntry,
+    MAX_WAITING, cleanGuestName, decideGuest, guestIdentity, guestPathFor, guestsForStaff, isGuestToken, meetingLinkPath,
+    normalizeExternalContacts, type GuestEntry,
 } from '../meetings/online';
 import { randomBytes } from 'crypto';
 
@@ -507,6 +509,50 @@ async function main() {
         check('staff never see a guest\'s key', view.every(g => !('key' in g)));
         check('waiting first, oldest first; then the rest', view.map(g => g.id).join(',') === 'early,late,in');
         check('the waiting list has a cap', MAX_WAITING > 0 && MAX_WAITING <= 50);
+    }
+
+    console.log('\nMeeting link WhatsApp template & email (owner 2026-11-26)');
+    {
+        check('meeting link campaign name', MEETING_LINK_CAMPAIGN === (process.env.AISENSY_MEETING_LINK_CAMPAIGN || 'video_meeting_link_v2'));
+        const schedWhen = meetingWhenLabel('2026-11-26T13:10:00.000Z', '2026-11-26');
+        check('scheduled time formatted in IST', schedWhen === 'Thu, 26 Nov 2026 at 6:40 pm (IST)', schedWhen);
+        check('immediate meeting uses meeting date fallback', meetingWhenLabel(null, '2026-11-26') === 'Starting now (26 Nov 2026)');
+
+        const p = linkParams({
+            recipientName: 'Sahil Gorde',
+            meetingTitle: 'Weekly\nOps   Review',
+            hostName: 'Harsh\tPatel',
+            when: schedWhen,
+            joinUrl: 'https://fms-dev-saas-one.vercel.app/guest/tP0hpROu2VaEL1RAxeG-0eXjKV6mEN63',
+        });
+        check('5 template variables', p.length === 5);
+        check('first name only', p[0] === 'Sahil');
+        check('no line breaks, tabs or 4+ spaces in any variable', p.every(v => !/[\n\t]| {4,}/.test(v)));
+        const preview = linkPreview(p);
+        check('link template body within 1024 chars and holds details + link', preview.length <= 1024 && preview.includes('Weekly Ops Review') && preview.includes('Harsh Patel') && preview.includes('/guest/tP0hpROu2VaEL1RAxeG-0eXjKV6mEN63'));
+
+        const subj = linkEmailSubject('Q4 Plan', schedWhen);
+        check('email subject includes title and time', subj.includes('Q4 Plan') && subj.includes('6:40 pm (IST)'));
+        const html = linkEmailHtml({ recipientName: 'Asha<script>', meetingTitle: 'Review & Sync', hostName: 'Harsh', when: schedWhen, joinUrl: 'https://example.com/guest/abc', isExternal: true });
+        check('email html escapes unsafe chars and includes join link', !html.includes('<script>') && html.includes('Asha&lt;script&gt;') && html.includes('Review &amp; Sync') && html.includes('https://example.com/guest/abc'));
+    }
+
+    console.log('\nExternal guest optional contacts');
+    {
+        const kept = normalizeExternalContacts(['Asha Rao', 'Vendor B'], [
+            { name: 'asha rao', phone: '+91 98765 43210', email: 'ASHA@Example.COM' },
+            { name: 'Vendor B', phone: '', email: '' },
+            { name: 'Not Picked', phone: '9876543210', email: 'x@y.com' },
+        ]);
+        check('normalizes email, keeps canonical name, drops empty & unlisted', kept.length === 1 && kept[0].name === 'Asha Rao' && kept[0].phone === '+91 98765 43210' && kept[0].email === 'asha@example.com', kept);
+
+        const preserved = normalizeExternalContacts(['Asha Rao'], undefined, kept);
+        check('preserves existing contacts when rawContacts omitted', preserved.length === 1 && preserved[0].email === 'asha@example.com');
+        check('prunes removed names when rawContacts omitted', normalizeExternalContacts(['Other'], undefined, kept).length === 0);
+
+        const fails = (fn: () => unknown) => { try { fn(); return false; } catch { return true; } };
+        check('rejects short phone number', fails(() => normalizeExternalContacts(['Asha'], [{ name: 'Asha', phone: '12345' }])));
+        check('rejects invalid email', fails(() => normalizeExternalContacts(['Asha'], [{ name: 'Asha', email: 'not-an-email' }])));
     }
 
     console.log(failures ? `\n${failures} FAILED` : '\nAll meeting tests passed');

@@ -33,7 +33,8 @@ test('recruitment navigation, layouts, theme and responsive error states', { tim
  let browser;
  try {
   browser=await chromium.launch({headless:true,executablePath:process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE || ['C:/Program Files/Google/Chrome/Application/chrome.exe','/usr/bin/chromium'].find(existsSync)});
-  await mkdir('artifacts/recruitment',{recursive:true});
+  const screenshots = process.env.RECRUITMENT_SCREENSHOTS;
+  if (screenshots) await mkdir(screenshots,{recursive:true});
   for(const width of [1440,390]) {
    const page=await browser.newPage({viewport:{width,height:1000},reducedMotion:'reduce'});
    const errors=[]; page.on('pageerror',e=>{errors.push(e.message); console.error(e.message)});
@@ -49,7 +50,8 @@ test('recruitment navigation, layouts, theme and responsive error states', { tim
     else if(url.includes('/members?')) body={members:[{id:'member-1',applicationId:candidate.id,record:candidate,stage:'screening',stageChangedAt:'2026-11-10',addedAt:'2026-11-10',remark:null}]};
     else if(url.includes('/stages?')) body={stages,changes:[],counts:{}};
     else if(url.includes('/recruiters?')) body={people:[]};
-    else if(url.includes('/dashboard?')) body={roles:[{...position,recruiterName:null,ageing:false,nextAction:'Review screening candidates'}],funnel:[{column:'Screening',count:1,rejected:0},{column:'Interview',count:0,rejected:0}],sources:[{source:'Referral',count:1}],today:{interviews:[],scorecardsPending:[],waiting:[],offersAwaiting:[]},metrics:null};
+    else if(url.includes('/dashboard?')) body={activeCandidates:2,interviewWeek:[{date:'2026-11-23',count:1}],spotlight:[{record:candidate,position,column:'Screening',member:{id:'member-1',score:null}},{record:{...candidate,id:'candidate-2',candidateId:'person-2',fullName:'Priya Shah'},position,column:'Interview',member:{id:'member-2',score:{overall:4,scorecards:1,rounds:[{round:'HR',overall:4,scorecards:1}]}}}],roles:[{...position,recruiterName:null,ageing:false,byColumn:[1,0],rejectedByColumn:[0,0],nextAction:'Review screening candidates'}],funnel:[{column:'Screening',count:1,rejected:0},{column:'Interview',count:0,rejected:0}],sources:[{source:'Referral',count:1}],today:{interviews:[],scorecardsPending:[],waiting:[],offersAwaiting:[]},metrics:null};
+    else if(url.includes('/interviews?')) body={interviews:[]};
     else if(url.includes('/offers?')) body=url.includes('handovers=')?{handovers:[]}:{offers:[offer,{...offer,id:'offer-2',candidateName:'Priya Shah',canDecide:false}]};
     else if(new URL(url).pathname==='/api/candidates') body={records:[candidate,{...candidate,id:'candidate-2',candidateId:'person-2',fullName:'Priya Shah'}],total:2,page:1,pageSize:50};
     else if(url.includes('/sheets?')) body={sheets:[]};
@@ -60,7 +62,7 @@ test('recruitment navigation, layouts, theme and responsive error states', { tim
    await page.getByRole('tab',{name:'Overview',exact:true}).waitFor();
    await page.evaluate(()=>document.fonts.ready);
    assert.ok(await page.evaluate(()=>document.fonts.check('16px Manrope')));
-   assert.equal(await page.evaluate(()=>getComputedStyle(document.body).getPropertyValue('--primary').trim()), '#353535');
+   assert.equal(await page.evaluate(()=>getComputedStyle(document.body).getPropertyValue('--primary').trim()), '#5145e4');
    assert.equal(await page.locator('.recruitment-header h1').evaluate(el=>getComputedStyle(el).fontWeight), '800');
    assert.equal(await page.evaluate(()=>getComputedStyle(document.body).getPropertyValue('--success').trim()), '#15803d');
    assert.equal(await page.locator('#recruitment-nav-home').getAttribute('aria-current'),'page');
@@ -68,16 +70,30 @@ test('recruitment navigation, layouts, theme and responsive error states', { tim
    await page.keyboard.press('End');
    assert.equal(await page.getByRole('tab',{name:'Insights',exact:true}).getAttribute('aria-selected'),'true');
    await page.keyboard.press('Home');
+   for (const [tab, region] of [['Pipeline','Pipeline flow'],['Interviews','Next interview'],['Insights','Where candidates come from']]) {
+    await page.getByRole('tab',{name:tab,exact:true}).click();
+    await page.getByRole('region',{name:region,exact:true}).waitFor();
+    assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),`${tab} fits ${width}px`);
+    if (screenshots) await page.screenshot({path:`${screenshots}/hub-${tab.toLowerCase()}-${width}.png`,fullPage:true});
+   }
+   await page.getByRole('tab',{name:'Candidates',exact:true}).click();
    const spotlight=page.getByRole('region',{name:'Candidate spotlight',exact:true});
    await spotlight.getByRole('heading',{name:'Asha Rao',exact:true}).waitFor();
-   await page.getByRole('region',{name:'People in your talent pool',exact:true}).getByRole('button',{name:/Priya Shah/}).click();
-   await spotlight.getByRole('heading',{name:'Priya Shah',exact:true}).waitFor();
+   await page.getByRole('group',{name:'Filter by stage'}).getByRole('button',{name:'Screening'}).click();
+   await spotlight.getByRole('heading',{name:'Asha Rao',exact:true}).waitFor();
+   await page.getByRole('group',{name:'Filter by stage'}).getByRole('button',{name:'All',exact:true}).click();
+   await page.getByRole('region',{name:'Candidate matches',exact:true}).getByRole('button',{name:'Priya Shah',exact:true}).click();
+   await spotlight.getByText('4/5 interview rating',{exact:true}).waitFor();
+   assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),`Candidates fits ${width}px`);
+   if (screenshots) await page.screenshot({path:`${screenshots}/hub-candidates-${width}.png`,fullPage:true});
    await spotlight.getByRole('button',{name:'Open profile',exact:true}).click();
    await page.getByRole('dialog').waitFor();
    await page.keyboard.press('Escape');
    await page.getByRole('dialog').waitFor({state:'hidden'});
+   await page.getByRole('tab',{name:'Overview',exact:true}).click();
+   await page.getByRole('region',{name:'Your morning brief',exact:true}).waitFor();
    assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),`home fits ${width}px`);
-   await page.screenshot({path:`artifacts/recruitment/home-${width}.png`,fullPage:true});
+   if (screenshots) await page.screenshot({path:`${screenshots}/home-${width}.png`,fullPage:true});
    await page.locator('#recruitment-nav-positions').click();
    await page.getByRole('button',{name:'Senior Facility Manager',exact:true}).waitFor();
    await page.getByRole('button',{name:'List view',exact:true}).click();
@@ -91,7 +107,7 @@ test('recruitment navigation, layouts, theme and responsive error states', { tim
    await page.getByText('No job matches that', {exact:true}).waitFor();
    await page.getByRole('button',{name:/Roles in this view/}).click();
    await page.getByRole('button',{name:'Senior Facility Manager',exact:true}).waitFor();
-   await page.screenshot({path:`artifacts/recruitment/positions-${width}.png`,fullPage:true});
+   if (screenshots) await page.screenshot({path:`${screenshots}/positions-${width}.png`,fullPage:true});
    for(const id of ['search','requisitions','pipeline','offers','candidates','resumes','email','outreach','sheets','dashboard','settings']) {
     await page.locator(`#recruitment-nav-${id}`).click();
     await page.locator(`[data-recruitment-screen="${id}"]`).waitFor();
@@ -115,7 +131,7 @@ test('recruitment navigation, layouts, theme and responsive error states', { tim
     if(id==='settings') { await screen.getByRole('button',{name:'Offer letters',exact:true}).click(); await screen.getByRole('heading',{name:'Offer letters',exact:true}).waitFor(); }
     if(id==='requisitions') { await screen.getByRole('button',{name:/Waiting for your decision/}).click(); await screen.getByRole('region',{name:'Approval inbox'}).waitFor(); }
     if(id==='pipeline') { await screen.getByRole('region',{name:'Role brief'}).waitFor(); await screen.getByText('1 candidate needs a follow-up').click(); }
-    await page.screenshot({path:`artifacts/recruitment/${id}-${width}.png`,fullPage:true});
+    if (screenshots) await page.screenshot({path:`${screenshots}/${id}-${width}.png`,fullPage:true});
    }
    await page.getByRole('button',{name:'Switch to dark theme'}).click();
    assert.ok(await page.locator('html').evaluate(el=>el.classList.contains('dark')));

@@ -13,7 +13,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { resetHistoryCheck } from "../../backend/lib/candidates/actions";
 import {
   createOffer, decideOffer, editLetter, fileInterview, istToInstant, letterGaps, listOffers, recordJoining, recordResponse, releaseOffer,
-  rescheduleInterview, runInterviewJobs, runOfferJobs, setInterviewStatus, submitScorecard, type FlowDeps,
+  rescheduleInterview, runInterviewJobs, runOfferJobs, setInterviewStatus, shareScorecard, submitScorecard, type FlowDeps,
 } from "../../backend/lib/candidates/hiring";
 import { addMembers, createPosition, getPosition, listMembers } from "../../backend/lib/candidates/positions";
 import { interviewsBetween, recruitmentDashboard } from "../../backend/lib/candidates/recruitment-dashboard";
@@ -104,13 +104,29 @@ describe("the hiring flow after booking", () => {
     const ratings = { "Technical skill": 4, Communication: 4, Attitude: 5, "Relevant experience": 3 };
     await assert.rejects(submitScorecard(client, mine.id, { ratings, overall: 2, recommendation: "reject" }), /Comments are required to reject/);
     await assert.rejects(submitScorecard(client, mine.id, { ratings: { Attitude: 5 }, overall: 4, recommendation: "proceed" }), /Rate Technical skill/);
-    await assert.rejects(createOffer(client, ORG, ME, { applicationId: farah.id, positionId, proposedCtc: 400000 }, deps), /scorecards/);
+    const beforeShare = sent.length;
+    assert.deepEqual(await shareScorecard(client, ORG, mine.id, "copy", deps), { url: `https://app.test/score/${mine.id}` });
+    assert.equal(sent.length, beforeShare);
+    await assert.rejects(shareScorecard(client, PANEL, mine.id, "email", deps), /no longer there/);
+    assert.deepEqual(await shareScorecard(client, ORG, mine.id, "email", deps), { email: "priya@example.com" });
+    assert.equal(sent.length, beforeShare + 1);
+    assert.equal(sent.at(-1)?.to, "priya@example.com");
+    assert.ok(sent.at(-1)?.html.includes(`https://app.test/score/${mine.id}`));
+    await assert.rejects(shareScorecard(client, ORG, mine.id, "email", { ...deps, scorecardLink: async () => null }), /create the scorecard link/);
+    assert.equal(sent.length, beforeShare + 1);
+    await db.exec("begin");
+    try {
+      const offer = await createOffer(client, ORG, ME, { applicationId: farah.id, positionId, proposedCtc: 400000 }, deps);
+      assert.equal(offer.status, "pending", "a completed interview can proceed to approval without any panel feedback");
+    } finally { await db.exec("rollback"); }
     const first = await submitScorecard(client, mine.id, { ratings, overall: 4, recommendation: "proceed", comments: "Strong on Tally." });
     assert.equal(first.others.length, 0, "nobody else has submitted: nothing to see");
     await assert.rejects(submitScorecard(client, mine.id, { ratings, overall: 4, recommendation: "proceed" }), /already submitted/);
-    await assert.rejects(createOffer(client, ORG, ME, { applicationId: farah.id, positionId, proposedCtc: 400000 }, deps), /scorecards/);
+    await assert.rejects(shareScorecard(client, ORG, mine.id, "email", deps), /already submitted/);
     const second = await submitScorecard(client, theirs.id, { ratings, overall: 3, recommendation: "hold", comments: "Check references." });
     assert.deepEqual(second.others.map((c) => [c.overall, c.recommendation]), [[4, "proceed"]], "after submitting, the other card is visible");
+    const dashboard = await recruitmentDashboard(client, ORG, new Date("2026-11-24T00:00:00Z"), true);
+    assert.ok(dashboard.spotlight?.some(p => p.record.candidateId === farah.candidateId && p.member.score?.overall === 3.5));
     // Chasers only for cards still empty: none left here.
     assert.equal((await runInterviewJobs(client, ORG, { ...deps, now: () => new Date(istToInstant("2026-11-23T15:00").getTime() + 30 * 3_600_000) })).chasers, 0);
   });
@@ -149,6 +165,9 @@ describe("the hiring flow after booking", () => {
     await assert.rejects(recordResponse(client, ORG, ME, offer.id, { response: "declined" }), /reason/);
     const accepted = await recordResponse(client, ORG, ME, offer.id, { response: "accepted" });
     assert.deepEqual([accepted.status, accepted.joiningDate], ["accepted", "2026-12-15"]);
+    const dashboard = await recruitmentDashboard(client, ORG, NOW, true);
+    assert.ok(dashboard.offersInPlay?.some(o => o.id === offer.id && o.joiningDate === "2026-12-15"));
+    assert.ok(!dashboard.today.offersAwaiting.some(o => o.id === offer.id));
     const joined = await recordJoining(client, ORG, ME, offer.id, { outcome: "joined" }, deps);
     assert.equal(joined.status, "joined");
     assert.equal((await getPosition(client, ORG, positionId)).status, "closed", "its one opening is filled");
@@ -163,10 +182,9 @@ describe("the hiring flow after booking", () => {
     const proposal = { applicationId: record.id, positionId, proposedCtc: 350_000 };
     await assert.rejects(createOffer(client, ORG, ME, proposal, deps), /Complete an interview/);
     const id = "22222222-2222-4222-8222-222222222222";
-    const cards = await fileInterview(client, ORG, ME, { id, candidateId: record.candidateId, applicationId: record.id, positionId, round: "HR", atLocal: "2026-11-22T11:00", mode: "in_person", venue: null, joinPath: null, interviewers: [{ id: PANEL, name: "Priya" }] });
+    await fileInterview(client, ORG, ME, { id, candidateId: record.candidateId, applicationId: record.id, positionId, round: "HR", atLocal: "2026-11-22T11:00", mode: "in_person", venue: null, joinPath: null, interviewers: [] });
     await assert.rejects(createOffer(client, ORG, ME, proposal, deps), /scheduled interviews/);
     await setInterviewStatus(client, ORG, ME, id, { status: "done" }, deps);
-    await submitScorecard(client, cards.get(PANEL)!, { ratings: { "Technical skill": 4, Communication: 4, Attitude: 4, "Relevant experience": 4 }, overall: 4, recommendation: "proceed" });
     const offer = await createOffer(client, ORG, ME, { applicationId: record.id, positionId, proposedCtc: 350_000, joiningDate: "2026-12-20" }, deps);
     assert.equal(offer.needsDirector, false, "within the band: the HR Head only");
     await decideOffer(client, ORG, by(HR_HEAD, "Anita Verma"), offer.id, { decision: "approve" }, deps);
@@ -183,11 +201,15 @@ describe("the hiring flow after booking", () => {
   });
 
   it("counts the dashboard from the records", async () => {
-    const d = await recruitmentDashboard(client, ORG, NOW);
+    const d = await recruitmentDashboard(client, ORG, new Date("2026-11-24T00:00:00Z"), true);
     const role = d.roles.find((r) => r.id === positionId);
     assert.ok(role, "the open role is listed");
     assert.equal(d.funnel.reduce((n, f) => n + f.count + f.rejected, 0), 2, "both people are counted once");
     assert.ok(Array.isArray(d.today.interviews) && Array.isArray(d.today.offersAwaiting));
+    assert.equal(d.interviewWeek.length, 7);
+    assert.equal(d.interviewWeek.find(day => day.date === "2026-11-23")?.count, 1);
+    assert.equal(d.activeCandidates, new Set(d.spotlight?.map(p => p.record.candidateId)).size);
+
     // Owner 2026-11-25 (workspace Pipeline and Insights tabs): the role's people by column, and where they came from.
     assert.equal(role.byColumn.length, d.funnel.length, "one count per board column");
     assert.equal(role.byColumn.reduce((n, c) => n + c, 0), role.inPipeline, "the columns add up to the people in the running");

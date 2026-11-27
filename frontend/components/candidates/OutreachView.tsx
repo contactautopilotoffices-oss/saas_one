@@ -9,6 +9,7 @@ import {
     type ApplicationField, type ApplicationTarget, type OutreachSettings, type OutreachTemplate, type Placeholder,
 } from '@/backend/lib/candidates/outreach-settings';
 import type { Position } from '@/backend/lib/candidates/types';
+import { BriefAttachmentField, uploadBrief } from './BriefAttachmentField';
 import { api, qs } from './api';
 import { formatDate } from './format';
 import { Drawer, Spinner, useUi } from './ui';
@@ -54,7 +55,7 @@ export default function OutreachView({ orgId, onSearch }: { orgId: string; onSea
             {section === 'sends' && <div className="recruitment-hero"><h2 className="text-xl font-semibold">Reach the right people</h2><p className="mt-2 text-sm text-text-secondary">Build a shortlist, choose a message, and review every recipient before sending.</p>{onSearch && <button type="button" className={`${K_BTN_PRIMARY} mt-4`} onClick={onSearch}>Choose candidates</button>}</div>}
             {section === 'sends' && <SendsPanel orgId={orgId} />}
             {section === 'applications' && <ApplicationsPanel orgId={orgId} />}
-            {(section === 'form' || section === 'screening' || section === 'offer' || section === 'templates' || section === 'auto') && <SettingsPanel orgId={orgId} section={section} />}
+            {(section === 'form' || section === 'screening' || section === 'offer' || section === 'templates' || section === 'auto') && <SettingsPanel key={orgId} orgId={orgId} section={section} />}
             </div></div>
         </div>
     );
@@ -267,43 +268,56 @@ function SettingsPanel({ orgId, section }: { orgId: string; section: 'form' | 's
     const [meta, setMeta] = useState<Omit<SettingsResponse, 'settings'> | null>(null);
     const [saved, setSaved] = useState<OutreachSettings | null>(null);
     const [draft, setDraft] = useState<OutreachSettings | null>(null);
+    const [files, setFiles] = useState<Record<string, File | undefined>>({});
+    const setFile = (id: string, file: File | null) => setFiles(f => ({ ...f, [id]: file ?? undefined }));
     const [busy, setBusy] = useState(false);
     useEffect(() => {
         const ctrl = new AbortController();
         void api<SettingsResponse>(`/api/candidates/outreach/settings${qs({ orgId })}`, { signal: ctrl.signal }).then(res => {
             if (ctrl.signal.aborted) return;
             if (!res.ok) { notify(res.error, 'error'); return; }
+            setFiles({});
             setMeta({ placeholders: res.data.placeholders, targets: res.data.targets });
             setSaved(res.data.settings);
             setDraft(res.data.settings);
         });
         return () => ctrl.abort();
     }, [orgId, notify]);
-    const dirty = useMemo(() => !!saved && !!draft && JSON.stringify(saved) !== JSON.stringify(draft), [saved, draft]);
+    const dirty = useMemo(() => !!saved && !!draft && (draft.assignment.library.some(t => files[t.id]) || JSON.stringify(saved) !== JSON.stringify(draft)), [saved, draft, files]);
     const save = async () => {
         if (!draft) return;
         setBusy(true);
-        const res = await api<{ settings: OutreachSettings }>('/api/candidates/outreach/settings', { method: 'PATCH', json: { orgId, settings: draft } });
+        const library = [];
+        for (const template of draft.assignment.library) {
+            const file = files[template.id];
+            if (!file) { library.push(template); continue; }
+            const upload = await uploadBrief(orgId, file);
+            if (!upload.ok) { setBusy(false); notify(upload.error, 'error'); return; }
+            library.push({ ...template, attachment: upload.data.attachment });
+        }
+        const settings = { ...draft, assignment: { ...draft.assignment, library } };
+        const res = await api<{ settings: OutreachSettings }>('/api/candidates/outreach/settings', { method: 'PATCH', json: { orgId, settings } });
         setBusy(false);
         if (!res.ok) { notify(res.error, 'error'); return; }
         setSaved(res.data.settings);
         setDraft(res.data.settings);
+        setFiles({});
         notify('Saved', 'success');
     };
     if (!draft || !meta) return <Loading />;
     return (
-        <div className="space-y-4 pb-16">
+        <fieldset disabled={busy} className="min-w-0 space-y-4 pb-16">
             {section === 'form' && <FormEditor value={draft.applicationForm} targets={meta.targets} onChange={applicationForm => setDraft(d => d && { ...d, applicationForm })} />}
             {section === 'screening' && <ScreeningEditor orgId={orgId} value={draft} targets={meta.targets} onChange={setDraft} />}
-            {section === 'offer' && <OfferSettingsEditor value={draft} onChange={setDraft} />}
+            {section === 'offer' && <OfferSettingsEditor value={draft} onChange={setDraft} files={files} setFile={setFile} />}
             {section === 'templates' && <TemplatesEditor value={draft.templates} placeholders={meta.placeholders} onChange={templates => setDraft(d => d && { ...d, templates })} />}
             {section === 'auto' && <AutoEditor value={draft} onChange={setDraft} />}
             <div className="sticky bottom-3 z-10 flex flex-wrap items-center justify-end gap-2 rounded-xl border border-border bg-surface/95 px-4 py-2.5 shadow-[0_8px_24px_-8px_rgba(16,24,40,0.18)] backdrop-blur">
                 <span className="mr-auto">{dirty ? <StatusPill tone="amber">Unsaved changes</StatusPill> : <span className="text-sm text-text-tertiary">All changes saved</span>}</span>
-                <button type="button" onClick={() => setDraft(saved)} disabled={!dirty || busy} className={K_BTN}><RotateCcw className="h-4 w-4" />Discard</button>
+                <button type="button" onClick={() => { setFiles({}); setDraft(saved); }} disabled={!dirty || busy} className={K_BTN}><RotateCcw className="h-4 w-4" />Discard</button>
                 <button type="button" onClick={() => void save()} disabled={!dirty || busy} className={K_BTN_PRIMARY}>{busy && <Spinner />}Save</button>
             </div>
-        </div>
+        </fieldset>
     );
 }
 
@@ -428,7 +442,10 @@ function ScreeningEditor({ orgId, value, targets, onChange }: { orgId: string; v
 }
 
 /** Owner 2026-11-24: the ready-made assignments, the documents to ask for, and the offer's breakup rows and approvals. */
-function OfferSettingsEditor({ value, onChange }: { value: OutreachSettings; onChange: (v: OutreachSettings) => void }) {
+function OfferSettingsEditor({ value, onChange, files, setFile }: {
+    value: OutreachSettings; onChange: (v: OutreachSettings) => void;
+    files: Record<string, File | undefined>; setFile: (id: string, file: File | null) => void;
+}) {
     const a = value.assignment;
     const docs = value.documents;
     const o = value.offer;
@@ -445,7 +462,7 @@ function OfferSettingsEditor({ value, onChange }: { value: OutreachSettings; onC
             <section className={`${K_CARD} space-y-4 px-4 py-4 sm:px-5`} aria-label="Assignments">
                 <div>
                     <h2 className={H}>Assignments</h2>
-                    <p className="mt-0.5 text-sm text-text-secondary">Ready-made assignments per department: HR picks one when sending (Candidate → Assignment &amp; documents) and can still edit it. The candidate gets a WhatsApp with their own page: the brief, the Drive link, the deadline, and where to submit. The AI score against the JD shows to HR only.</p>
+                    <p className="mt-0.5 text-sm text-text-secondary">Ready-made assignments per department: HR picks one when sending (Candidate → Assignment &amp; documents) and can still edit it. The candidate gets a WhatsApp with their own page: the brief, any attached file or Drive link, the deadline, and where to submit. The AI score against the JD shows to HR only.</p>
                 </div>
                 <div className="grid gap-3 sm:grid-cols-2">
                     <label className="block"><span className={K_LABEL}>WhatsApp template</span>
@@ -460,10 +477,11 @@ function OfferSettingsEditor({ value, onChange }: { value: OutreachSettings; onC
                             <input aria-label="Title" placeholder="Title the candidate sees" value={t.title} onChange={e => setLib(i, { title: e.target.value })} maxLength={200} className={`${INPUT} sm:col-span-2`} />
                             <textarea aria-label="Brief" placeholder="The brief" value={t.brief} onChange={e => setLib(i, { brief: e.target.value })} rows={4} maxLength={8000} className={`${K_AREA} sm:col-span-2`} />
                             <textarea aria-label="Guidelines" placeholder="Guidelines (optional)" value={t.guidelines} onChange={e => setLib(i, { guidelines: e.target.value })} rows={2} maxLength={4000} className={`${K_AREA} sm:col-span-2`} />
+                            <BriefAttachmentField name={files[t.id]?.name ?? t.attachment?.name} onChange={file => { setFile(t.id, file); if (!file) setLib(i, { attachment: null }); }} />
                             <input aria-label="Drive link" placeholder="Drive link (optional)" value={t.driveLink} onChange={e => setLib(i, { driveLink: e.target.value })} maxLength={500} className={INPUT} />
                             <div className="flex items-center gap-2">
                                 <input aria-label="Days to submit" type="number" min={1} max={30} value={t.dueDays} onChange={e => setLib(i, { dueDays: Math.max(1, Math.min(30, Number(e.target.value) || 3)) })} className={`${K_FIELD} w-24`} /><span className="text-sm text-text-secondary">days</span>
-                                <button type="button" aria-label={`Remove ${t.name}`} onClick={() => setA({ library: a.library.filter((_, j) => j !== i) })} className={`${K_ICON_BTN_DANGER} ml-auto`}><Trash2 className="h-4 w-4" /></button>
+                                <button type="button" aria-label={`Remove ${t.name}`} onClick={() => { setFile(t.id, null); setA({ library: a.library.filter((_, j) => j !== i) }); }} className={`${K_ICON_BTN_DANGER} ml-auto`}><Trash2 className="h-4 w-4" /></button>
                             </div>
                         </li>
                     ))}

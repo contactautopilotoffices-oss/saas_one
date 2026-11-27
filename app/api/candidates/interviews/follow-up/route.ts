@@ -1,11 +1,23 @@
 import { NextResponse } from "next/server";
 
 import { WRITE_RATE_LIMIT } from "@/backend/lib/candidates/config";
-import { defaultFlowDeps, rescheduleInterview, setInterviewStatus } from "@/backend/lib/candidates/hiring";
+import { defaultFlowDeps, rescheduleInterview, setInterviewStatus, shareScorecard } from "@/backend/lib/candidates/hiring";
 
 import { actorFor, errorResponse, rateLimited, readJson, requireCandidateAccess } from "../../_lib/auth";
 
 export const runtime = "nodejs";
+
+export async function POST(request: Request) {
+  const body = await readJson(request);
+  if (body instanceof NextResponse) return body;
+  const auth = await requireCandidateAccess(body.orgId);
+  if (auth.error) return auth.error;
+  const limited = rateLimited("write", auth.user.id, WRITE_RATE_LIMIT);
+  if (limited) return limited;
+  try {
+    return NextResponse.json(await shareScorecard(auth.admin, auth.orgId, body.scorecardId, body.action, defaultFlowDeps()), { headers: { "Cache-Control": "no-store" } });
+  } catch (error) { return errorResponse(error, "Could not share this scorecard."); }
+}
 
 /**
  * An interview's follow-up (owner 2026-11-21; spec Stage 6, T07, A12): { orgId, id, status: done | no_show | cancelled,
