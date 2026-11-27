@@ -196,7 +196,14 @@ export const DEFAULT_TEMPLATES: OutreachTemplate[] = [...BASE_TEMPLATES, ...FLOW
 // Assignments, documents and offers (owner 2026-11-24) ---------------------------------------------------------------------
 
 /** One ready-made assignment (meeting: "standard assignment templates per department"). */
-export interface AssignmentTemplate { id: string; name: string; department: string; title: string; brief: string; guidelines: string; driveLink: string; dueDays: number }
+export const MAX_BRIEF_BYTES = 4 * 1024 * 1024;
+export const BriefAttachmentSchema = z.object({
+  key: z.string().regex(/^[a-f0-9]{64}\.(?:pdf|docx?)$/),
+  name: z.string().trim().min(1).max(180).regex(/^[^/\\\x00-\x1f\x7f]+\.(?:pdf|docx?)$/i),
+}).refine(({ key, name }) => key.split(".").pop() === name.toLowerCase().split(".").pop(), "The attachment name must match its file type.");
+export type BriefAttachment = z.infer<typeof BriefAttachmentSchema>;
+
+export interface AssignmentTemplate { id: string; name: string; department: string; title: string; brief: string; guidelines: string; driveLink: string; attachment?: BriefAttachment | null; dueDays: number }
 export interface AssignmentConfig { whatsappTemplateId: string; defaultDueDays: number; library: AssignmentTemplate[] }
 export const DEFAULT_ASSIGNMENT: AssignmentConfig = {
   whatsappTemplateId: "wa_assignment",
@@ -399,6 +406,7 @@ const AssignmentInput = z.object({
     title: z.string().trim().min(1, "Give each assignment a title.").max(150),
     brief: z.string().trim().min(1, "Write each assignment's brief.").max(5000),
     guidelines: z.string().trim().max(2000),
+    attachment: BriefAttachmentSchema.nullish(),
     driveLink: z.string().trim().max(500).refine((v) => v === "" || /^https?:\/\/\S+$/i.test(v), "An assignment's file link must start with https://."),
     dueDays: z.number().int().min(1).max(30),
   })).max(40),

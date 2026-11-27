@@ -18,6 +18,8 @@ import { randomBytes } from "node:crypto";
 import type { SupabaseClient } from "@supabase/supabase-js";
 
 import { recordAction, type Actor } from "./actions";
+import { BriefAttachmentSchema } from "./outreach-settings";
+import { briefDownloadUrl } from "./assignment-brief-storage";
 import { RESUME_BUCKET } from "./config";
 import { parseEmail, parsePhone } from "./normalize";
 import { DEFAULT_OUTREACH, REQUIRED_TARGETS, type ApplicationField, type ApplicationFormConfig, type ApplicationTarget, type OutreachSettings } from "./outreach-settings";
@@ -146,7 +148,7 @@ export interface PublicForm {
   /** Owner 2026-11-24: the company profile link HR set, when any. */
   companyProfileUrl?: string | null;
   /** Owner 2026-11-24: the assignment's brief (kind "assignment"). */
-  assignment?: { title: string; brief: string; guidelines: string | null; driveLink: string | null; due: string | null; submitted: boolean } | null;
+  assignment?: { title: string; brief: string; guidelines: string | null; driveLink: string | null; attachmentName?: string; downloadUrl?: string; due: string | null; submitted: boolean } | null;
 }
 
 /** Owner 2026-11-24: a link of another kind (assignment, documents) for a known person. */
@@ -181,7 +183,7 @@ export const screeningForm = (s: OutreachSettings, own: ApplicationField[] | nul
 });
 
 /** What the public page shows for a link, or null when the link is unknown or switched off. Marks the link opened. */
-export async function publicForm(client: SupabaseClient, token: string): Promise<PublicForm | null> {
+export async function publicForm(client: SupabaseClient, token: string, downloadBrief = false): Promise<PublicForm | null> {
   const link = await linkByToken(client, token);
   if (!link) return null;
   const [config, position, person] = await Promise.all([
@@ -193,7 +195,7 @@ export async function publicForm(client: SupabaseClient, token: string): Promise
   if (p?.deleted_at) return null;
   await client.from(LINKS).update({ opened_at: new Date().toISOString() }).eq("id", link.id).is("opened_at", null);
   const name = (person.data as { full_name?: string | null } | null)?.full_name ?? "";
-  if (link.kind === "assignment" || link.kind === "documents") return kindForm(client, link, config.outreach, { role: p?.title ?? null, location: p?.location ?? null, firstName: name.trim().split(/\s+/)[0] || null });
+  if (link.kind === "assignment" || link.kind === "documents") return kindForm(client, link, config.outreach, downloadBrief, { role: p?.title ?? null, location: p?.location ?? null, firstName: name.trim().split(/\s+/)[0] || null });
   const screening = link.kind === "screening";
   if (screening) {
     // Answered once: the link does not take a second set.
@@ -377,16 +379,20 @@ export function istDue(at: Date): string {
   return `${DAYS[d.getUTCDay()]}, ${d.getUTCDate()} ${MONTHS[d.getUTCMonth()]} ${d.getUTCFullYear()} at ${h % 12 || 12}:${String(d.getUTCMinutes()).padStart(2, "0")} ${h < 12 ? "am" : "pm"} (IST)`;
 }
 
-async function kindForm(client: SupabaseClient, link: LinkRow, s: OutreachSettings, ctx: { role: string | null; location: string | null; firstName: string | null }): Promise<PublicForm | null> {
+async function kindForm(client: SupabaseClient, link: LinkRow, s: OutreachSettings, downloadBrief: boolean, ctx: { role: string | null; location: string | null; firstName: string | null }): Promise<PublicForm | null> {
   const base = { companyName: s.companyName, role: ctx.role, location: ctx.location, firstName: ctx.firstName, companyProfileUrl: s.companyProfileUrl || null };
   if (link.kind === "assignment") {
-    const { data } = await client.from(ASSIGNMENTS).select("title, brief, guidelines, drive_link, due_at, status").eq("link_id", link.id).maybeSingle();
-    const a = data as { title: string; brief: string; guidelines: string | null; drive_link: string | null; due_at: string | null; status: string } | null;
+    const { data } = await client.from(ASSIGNMENTS).select("*").eq("organization_id", link.organization_id).eq("link_id", link.id).maybeSingle();
+    const a = data as { title: string; brief: string; guidelines: string | null; drive_link: string | null; brief_attachment?: unknown; due_at: string | null; status: string } | null;
     if (!a || a.status === "cancelled") return null;
+    const attachment = BriefAttachmentSchema.safeParse(a.brief_attachment);
     return {
       ...base, kind: "assignment",
       form: { title: "Assignment", intro: "Read the brief, do the work, then submit it here: a link, a file, or both.", fields: ASSIGNMENT_FORM_FIELDS, consentText: s.applicationForm.consentText, thanks: "Thank you. Your assignment has reached our recruitment team; we will be in touch." },
-      assignment: { title: a.title, brief: a.brief, guidelines: a.guidelines, driveLink: a.drive_link, due: a.due_at ? istDue(new Date(a.due_at)) : null, submitted: a.status === "submitted" },
+      assignment: { title: a.title, brief: a.brief, guidelines: a.guidelines, driveLink: a.drive_link,
+        ...(attachment.success ? { attachmentName: attachment.data.name } : {}),
+        ...(downloadBrief && attachment.success ? { downloadUrl: await briefDownloadUrl(client, link.organization_id, attachment.data) } : {}),
+        due: a.due_at ? istDue(new Date(a.due_at)) : null, submitted: a.status === "submitted" },
     };
   }
   return {

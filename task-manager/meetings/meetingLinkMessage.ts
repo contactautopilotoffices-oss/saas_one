@@ -2,7 +2,7 @@
  * Owner 2026-11-26: "Send meeting link" (WhatsApp via Meta-approved AiSensy template + Email) for online meetings.
  * Kept free of database imports so it can be tested offline.
  *
- * Meta / AiSensy template (`video_meeting_link_v1`, category UTILITY, language en):
+ * Meta / AiSensy template (`video_meeting_link_v2`, category UTILITY, language en):
  *   Hello {{1}},
  *
  *   You are invited to the online meeting "{{2}}" hosted by {{3}}.
@@ -13,7 +13,7 @@
  *   Please open the link at the meeting time to join the call.
  */
 
-export const MEETING_LINK_CAMPAIGN = process.env.AISENSY_MEETING_LINK_CAMPAIGN || 'video_meeting_link_v1';
+export const MEETING_LINK_CAMPAIGN = process.env.AISENSY_MEETING_LINK_CAMPAIGN || 'video_meeting_link_v2';
 
 const DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];

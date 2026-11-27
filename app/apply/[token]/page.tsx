@@ -132,6 +132,7 @@ export default function ApplyPage({ params }: { params: Promise<{ token: string 
                                 {form.assignment.due && <p className="text-sm font-semibold text-amber-800">Submit by {form.assignment.due}</p>}
                                 <FormDocument text={form.assignment.brief} />
                                 {form.assignment.guidelines && <><h3>Guidelines</h3><FormDocument text={form.assignment.guidelines} /></>}
+                                {form.assignment.attachmentName && <a href={`/api/public/apply/${encodeURIComponent(token)}?download=brief`} className="rf-secondary mt-3 max-w-full break-all">Download brief · {form.assignment.attachmentName}</a>}
                                 {form.assignment.driveLink && <a href={form.assignment.driveLink} target="_blank" rel="noopener noreferrer" className="rf-secondary mt-3">Open the assignment files</a>}
                             </section>
                         )}

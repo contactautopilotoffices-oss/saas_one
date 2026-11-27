@@ -513,7 +513,7 @@ async function main() {
 
     console.log('\nMeeting link WhatsApp template & email (owner 2026-11-26)');
     {
-        check('meeting link campaign name', MEETING_LINK_CAMPAIGN === (process.env.AISENSY_MEETING_LINK_CAMPAIGN || 'video_meeting_link_v1'));
+        check('meeting link campaign name', MEETING_LINK_CAMPAIGN === (process.env.AISENSY_MEETING_LINK_CAMPAIGN || 'video_meeting_link_v2'));
         const schedWhen = meetingWhenLabel('2026-11-26T13:10:00.000Z', '2026-11-26');
         check('scheduled time formatted in IST', schedWhen === 'Thu, 26 Nov 2026 at 6:40 pm (IST)', schedWhen);
         check('immediate meeting uses meeting date fallback', meetingWhenLabel(null, '2026-11-26') === 'Starting now (26 Nov 2026)');

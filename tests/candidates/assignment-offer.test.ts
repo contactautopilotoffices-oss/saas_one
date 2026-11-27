@@ -14,6 +14,7 @@ import type { PGlite } from "@electric-sql/pglite";
 import type { SupabaseClient } from "@supabase/supabase-js";
 
 import { publicForm, submitApplication, type ApplicationStorage } from "../../backend/lib/candidates/applications";
+import { uploadAssignmentBrief } from "../../backend/lib/candidates/assignment-brief-storage";
 import { scoreAssignment } from "../../backend/lib/candidates/assignment-score";
 import { cancelAssignment, listAssignments, listDocuments, requestDocuments, reviewDocument, sendAssignment } from "../../backend/lib/candidates/assignments";
 import {
@@ -22,7 +23,7 @@ import {
 import { DEFAULT_OUTREACH } from "../../backend/lib/candidates/outreach-settings";
 import { addMembers, createPosition } from "../../backend/lib/candidates/positions";
 import { createRecord } from "../../backend/lib/candidates/records";
-import { saveDepartmentHeads, saveRecruitmentConfig } from "../../backend/lib/candidates/requisitions";
+import { saveOutreachSettings, saveDepartmentHeads, saveRecruitmentConfig } from "../../backend/lib/candidates/requisitions";
 
 import { freshDb } from "./db-stub";
 import { pgliteSupabase } from "./pglite-supabase";
@@ -102,6 +103,7 @@ describe("assignment, documents and the letter of intent", () => {
     assert.equal(form?.kind, "assignment");
     assert.equal(form?.assignment?.title, "Diwali campaign plan");
     assert.equal(form?.assignment?.driveLink, "https://drive.google.com/x");
+    assert.equal((await publicForm(client, token, true))?.assignment?.downloadUrl, undefined);
     const base = { consent: true, resume: null, ip: null, userAgent: null };
     await assert.rejects(submitApplication(client, token, { ...base, answers: {} }, storage), /link to your work, a file, or both/);
     await assert.rejects(submitApplication(client, token, { ...base, answers: { submission_link: "drive.google.com/y" } }, storage), /https/);
@@ -197,5 +199,52 @@ describe("assignment, documents and the letter of intent", () => {
     assert.deepEqual([handover.candidateName, handover.joiningDate, handover.status], ["Neha Kulkarni", "2027-01-04", "pending"]);
     assert.equal(((handover.snapshot as { documents: unknown[] }).documents).length, 2, "the documents go with it");
     assert.ok(emails.some((e) => e.to === "anita@example.com" && /ready for onboarding/.test(e.subject)), "the HR team is told");
+  });
+
+  it("keeps sent briefs independent of template edits and restricts downloads to an active assignment", async () => {
+    const objects = new Set<string>();
+    const bucket = {
+      async upload(path: string) {
+        if (objects.has(path)) return { error: { message: "The resource already exists" } };
+        objects.add(path);
+        return { error: null };
+      },
+      async createSignedUrl(path: string, seconds: number, options: { download: string }) {
+        assert.equal(seconds, 60);
+        return objects.has(path) ? { data: { signedUrl: "https://storage.test/" + path + "?download=" + options.download } }
+          : { error: { message: "No such object" } };
+      },
+    };
+    const scoped = Object.assign(Object.create(client) as SupabaseClient, { storage: { from: () => bucket } });
+    const pdf = new File(["%PDF-1.7"], "Marketing brief.pdf");
+    const word = new File([Buffer.from("504b0304", "hex"), "word/document.xml"], "New brief.docx");
+    const legacy = new File([Buffer.from("d0cf11e0a1b11ae1", "hex"), Buffer.from("WordDocument", "utf16le")], "Legacy.doc");
+    const original = await uploadAssignmentBrief(scoped, ORG, pdf);
+    assert.deepEqual(await uploadAssignmentBrief(scoped, ORG, pdf), original);
+    assert.equal(objects.size, 1);
+    const replacement = await uploadAssignmentBrief(scoped, ORG, word);
+    assert.equal((await uploadAssignmentBrief(scoped, ORG, legacy)).name, legacy.name);
+    for (const invalid of [new File(["text"], "brief.pdf"), new File(["text"], "brief.txt"), new File([new Uint8Array(4194305)], "big.doc")]) {
+      await assert.rejects(uploadAssignmentBrief(scoped, ORG, invalid), /Choose/);
+    }
+    const template = { id: "plan", name: "Marketing", department: "Marketing", title: "Plan", brief: "Prepare a plan", guidelines: "", driveLink: "https://drive.google.com/x", dueDays: 3, attachment: original };
+    const settings = { ...DEFAULT_OUTREACH, assignment: { ...DEFAULT_OUTREACH.assignment, library: [template] } };
+    const saved = await saveOutreachSettings(scoped, ORG, settings);
+    const input = { applicationId: person.id, candidateId: person.candidateId, positionId, ...saved.assignment.library[0] };
+    const delivery = { send, alert: async () => undefined };
+    await assert.rejects(sendAssignment(scoped, ORG, ME, { ...input, attachment: { key: "../private.pdf", name: pdf.name } }, delivery), /valid assignment attachment/);
+    const foreign = await uploadAssignmentBrief(scoped, HR, new File(["%PDF-foreign"], "Private.pdf"));
+    await assert.rejects(sendAssignment(scoped, ORG, ME, { ...input, attachment: foreign }, delivery), /unavailable/);
+    const sent = await sendAssignment(scoped, ORG, ME, input, delivery);
+    const token = tokenOf(whatsapp.at(-1)!.templateParams[5], "/apply/");
+    settings.assignment.library[0] = { ...template, attachment: replacement };
+    await saveOutreachSettings(scoped, ORG, settings);
+    const shown = (await publicForm(scoped, token))?.assignment;
+    assert.equal(shown?.attachmentName, pdf.name);
+    assert.equal(shown?.driveLink, template.driveLink);
+    assert.equal(shown?.downloadUrl, undefined);
+    assert.ok((await publicForm(scoped, token, true))?.assignment?.downloadUrl?.includes(original.key));
+    await cancelAssignment(scoped, ORG, ME, sent.id);
+    assert.equal(await publicForm(scoped, token, true), null);
   });
 });

@@ -26,6 +26,7 @@
  *
  * Access is the caller's job (the routes' requireOrgMember); everything here runs with the service role.
  */
+import { briefDownloadUrl } from "./assignment-brief-storage";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { z } from "zod";
 
@@ -139,6 +140,13 @@ export async function saveOutreachSettings(client: SupabaseClient, orgId: string
     throw error;
   }
   const current = await loadRecruitmentConfig(client, orgId);
+  const existingFiles = new Set(current.outreach.assignment.library.map(t => t.attachment?.key));
+  for (const { attachment } of outreach.assignment.library) {
+    if (attachment && !existingFiles.has(attachment.key)) {
+      await briefDownloadUrl(client, orgId, attachment);
+      existingFiles.add(attachment.key);
+    }
+  }
   const next: RecruitmentConfig = { ...current, outreach };
   const now = new Date().toISOString();
   const { data: existing, error: readErr } = await client.from(SETTINGS).select("organization_id").eq("organization_id", orgId).maybeSingle();

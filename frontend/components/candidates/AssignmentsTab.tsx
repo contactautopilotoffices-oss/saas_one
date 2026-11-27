@@ -3,7 +3,8 @@
 import React, { useEffect, useState } from 'react';
 import { FileCheck2, FileText, Link2, Send, Sparkles } from 'lucide-react';
 import type { AssignmentView, DocumentView } from '@/backend/lib/candidates/assignments';
-import type { OutreachSettings } from '@/backend/lib/candidates/outreach-settings';
+import { BriefAttachmentField, uploadBrief } from './BriefAttachmentField';
+import type { BriefAttachment, OutreachSettings } from '@/backend/lib/candidates/outreach-settings';
 import type { ScreeningView } from '@/backend/lib/candidates/screening';
 import type { CandidateRecord } from '@/backend/lib/candidates/types';
 import { api, qs } from './api';
@@ -173,14 +174,24 @@ function AssignmentComposer({ orgId, record, positions, settings, onClose, onSen
     const [positionId, setPositionId] = useState(positions[0]?.positionId ?? '');
     const [draft, setDraft] = useState({ title: '', brief: '', guidelines: '', driveLink: '', due: inDays(settings.assignment.defaultDueDays) });
     const [busy, setBusy] = useState(false);
+    const [attachment, setAttachment] = useState<BriefAttachment | null>(null);
+    const [file, setFile] = useState<File | null>(null);
     const library = settings.assignment.library;
     const use = (id: string) => {
         const t = library.find(x => x.id === id);
-        if (t) setDraft({ title: t.title, brief: t.brief, guidelines: t.guidelines, driveLink: t.driveLink, due: inDays(t.dueDays || settings.assignment.defaultDueDays) });
+        setFile(null);
+        setAttachment(t?.attachment ?? null);
+        setDraft({ title: t?.title ?? '', brief: t?.brief ?? '', guidelines: t?.guidelines ?? '', driveLink: t?.driveLink ?? '', due: inDays(t?.dueDays || settings.assignment.defaultDueDays) });
     };
     const send = async () => {
         setBusy(true);
-        const res = await api<{ sent: boolean; note: string | null }>('/api/candidates/assignments', { json: { orgId, action: 'send', applicationId: record.id, positionId, title: draft.title, brief: draft.brief, guidelines: draft.guidelines, driveLink: draft.driveLink, dueAt: draft.due ? new Date(draft.due).toISOString() : null } });
+        let briefAttachment = attachment;
+        if (file) {
+            const upload = await uploadBrief(orgId, file);
+            if (!upload.ok) { setBusy(false); notify(upload.error, 'error'); return; }
+            briefAttachment = upload.data.attachment;
+        }
+        const res = await api<{ sent: boolean; note: string | null }>('/api/candidates/assignments', { json: { orgId, action: 'send', applicationId: record.id, positionId, title: draft.title, brief: draft.brief, guidelines: draft.guidelines, driveLink: draft.driveLink, attachment: briefAttachment, dueAt: draft.due ? new Date(draft.due).toISOString() : null } });
         setBusy(false);
         if (!res.ok) { notify(res.error, 'error'); return; }
         notify(res.data.sent ? 'Assignment sent on WhatsApp; the stakeholders are told' : (res.data.note ?? 'Saved, but not sent'), res.data.sent ? 'success' : 'info');
@@ -189,9 +200,9 @@ function AssignmentComposer({ orgId, record, positions, settings, onClose, onSen
     const set = (k: keyof typeof draft) => (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => setDraft(x => ({ ...x, [k]: e.target.value }));
     return (
         <Dialog open onClose={onClose} title="Send an assignment" labelId="send-assignment" size="lg"
-            description="The candidate gets a WhatsApp with their own link: the brief, your Drive link and the deadline, and where to submit."
+            description="The candidate receives a WhatsApp link to read the brief, download any attached file and submit their work."
             footer={<button type="button" onClick={() => void send()} disabled={busy || !draft.title.trim() || !draft.brief.trim() || !positionId} className={BTN_PRIMARY}>{busy ? <Spinner /> : <Send className="h-4 w-4" />}Send</button>}>
-            <div className="space-y-3">
+            <fieldset disabled={busy} className="space-y-3">
                 {positions.length > 1 && (
                     <div><label className={LABEL} htmlFor="as-pos">Position</label>
                         <select id="as-pos" className={`${INPUT} mt-1`} value={positionId} onChange={e => setPositionId(e.target.value)}>{positions.map(p => <option key={p.positionId} value={p.positionId}>{p.positionTitle}</option>)}</select></div>
@@ -206,11 +217,12 @@ function AssignmentComposer({ orgId, record, positions, settings, onClose, onSen
                 <div><label className={LABEL} htmlFor="as-title">Title</label><input id="as-title" className={`${INPUT} mt-1`} value={draft.title} onChange={set('title')} maxLength={200} /></div>
                 <div><label className={LABEL} htmlFor="as-brief">The brief</label><textarea id="as-brief" rows={5} className={`${INPUT} mt-1`} value={draft.brief} onChange={set('brief')} maxLength={8000} /></div>
                 <div><label className={LABEL} htmlFor="as-guide">Guidelines (optional)</label><textarea id="as-guide" rows={3} className={`${INPUT} mt-1`} value={draft.guidelines} onChange={set('guidelines')} maxLength={4000} /></div>
+                <BriefAttachmentField name={file?.name ?? attachment?.name} onChange={next => { setFile(next); setAttachment(null); }} />
                 <div className="grid gap-3 sm:grid-cols-2">
                     <div><label className={LABEL} htmlFor="as-drive">Drive link (optional)</label><input id="as-drive" className={`${INPUT} mt-1`} value={draft.driveLink} onChange={set('driveLink')} placeholder="https://drive.google.com/…" /></div>
                     <div><label className={LABEL} htmlFor="as-due">Deadline</label><input id="as-due" type="datetime-local" className={`${INPUT} mt-1`} value={draft.due} onChange={set('due')} /></div>
                 </div>
-            </div>
+            </fieldset>
         </Dialog>
     );
 }

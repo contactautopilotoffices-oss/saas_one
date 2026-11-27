@@ -60,7 +60,7 @@ export async function POST(request: Request) {
         const record = await getRecord(admin, orgId, body.applicationId);
         const result = await sendAssignment(admin, orgId, by, {
           applicationId: record.id, candidateId: record.candidateId, positionId: body.positionId,
-          title: body.title, brief: body.brief, guidelines: body.guidelines, driveLink: body.driveLink, dueAt: body.dueAt,
+          title: body.title, brief: body.brief, guidelines: body.guidelines, driveLink: body.driveLink, attachment: body.attachment, dueAt: body.dueAt,
         });
         return NextResponse.json(result);
       }
