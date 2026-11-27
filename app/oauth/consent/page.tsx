@@ -1,7 +1,7 @@
 import { redirect } from 'next/navigation';
-import { ShieldCheck, Eye, Ban, CheckCircle2 } from 'lucide-react';
+import { ShieldCheck, Eye, Ban, CheckCircle2, AlertTriangle } from 'lucide-react';
 import { createClient } from '@/frontend/utils/supabase/server';
-import { isAllowedRedirect } from '@/backend/lib/mcp/redirectPolicy';
+import { isConnectableRedirect, isKnownAssistantRedirect, redirectTargetLabel } from '@/backend/lib/mcp/redirectPolicy';
 import ConsentForm from './ConsentForm';
 
 /**
@@ -53,17 +53,13 @@ export default async function OAuthConsentPage({ searchParams }: { searchParams:
 
     // Already approved earlier: Supabase hands back the redirect straight away. Still check where it goes.
     if (!('authorization_id' in details)) {
-        if (isAllowedRedirect(details.redirect_url)) redirect(details.redirect_url);
-        return <Problem title="Connection refused" detail="This app is not an approved assistant for the FMS." />;
+        if (isConnectableRedirect(details.redirect_url)) redirect(details.redirect_url);
+        return <Problem title="Connection refused" detail="This redirect destination is not safe for the FMS." />;
     }
 
-    const allowed = isAllowedRedirect(details.redirect_uri);
-    let host = '';
-    try {
-        host = new URL(details.redirect_uri).host;
-    } catch {
-        host = 'an unknown address';
-    }
+    const allowed = isConnectableRedirect(details.redirect_uri);
+    const recognized = isKnownAssistantRedirect(details.redirect_uri);
+    const host = redirectTargetLabel(details.redirect_uri);
     const clientName = details.client?.name || 'An app';
 
     return (
@@ -94,6 +90,14 @@ export default async function OAuthConsentPage({ searchParams }: { searchParams:
                             <span>Through this connection it <strong>cannot</strong> approve, change or delete anything else.</span>
                         </li>
                     </ul>
+                    {!recognized && (
+                        <div className="mt-4 flex gap-2 rounded-lg border border-amber-500/30 bg-amber-500/10 p-3 text-xs text-amber-200">
+                            <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-400" />
+                            <span>
+                                <strong>Verify destination:</strong> this request will return access to <strong>{host}</strong>. Only click Allow if you started this connection from that platform.
+                            </span>
+                        </div>
+                    )}
                     <p className="mt-4 text-xs text-slate-400">
                         After you allow it, you will go back to <span className="text-slate-200">{host}</span>. Every request it makes is logged.
                         FMS data you ask about is sent to that assistant.
@@ -101,7 +105,7 @@ export default async function OAuthConsentPage({ searchParams }: { searchParams:
                 </>
             ) : (
                 <p className="mt-5 rounded-lg border border-red-500/30 bg-red-500/10 p-3 text-sm text-red-200">
-                    This app wants to send you to <strong>{host}</strong>, which is not an approved assistant for the FMS.
+                    This app wants to send you to <strong>{host}</strong> using an unsafe or disallowed redirect URL.
                     It cannot be connected. If you did not start this, someone may be trying to get access to your account: choose Deny.
                 </p>
             )}
