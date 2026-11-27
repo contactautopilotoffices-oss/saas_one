@@ -44,7 +44,7 @@ export function useAppSession() {
                     .from('organization_memberships')
                     .select('role, organization_id')
                     .eq('user_id', user.id)
-                    .neq('is_active', false),
+                    .or('is_active.is.null,is_active.eq.true'),
                 supabase
                     .from('property_memberships')
                     .select('property_id, role')
@@ -69,8 +69,8 @@ export function useAppSession() {
             };
 
             const sortedOrgMems = [...(orgMems || [])].sort((a, b) => {
-                const aP = ORG_ROLE_PRIORITY[a.role] ?? 99;
-                const bP = ORG_ROLE_PRIORITY[b.role] ?? 99;
+                const aP = ORG_ROLE_PRIORITY[(a.role || '').toLowerCase()] ?? 99;
+                const bP = ORG_ROLE_PRIORITY[(b.role || '').toLowerCase()] ?? 99;
                 return aP - bP;
             });
             const orgMem = sortedOrgMems[0] || null;

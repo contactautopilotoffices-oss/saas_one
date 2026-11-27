@@ -117,3 +117,24 @@ test('migration adds properties SELECT RLS policy for ops_super_admin via is_org
     assert.match(sql, /public\.is_org_admin_or_ops_admin\(organization_id\)/);
     assert.doesNotMatch(sql, /CREATE\s+(OR\s+REPLACE\s+)?FUNCTION\s+public\.is_org_admin_v2/i);
 });
+
+test('AuthContext and useAppSession prioritize org_super_admin and ops_super_admin ahead of owner', async () => {
+    const authSrc = await read('frontend/context/AuthContext.tsx');
+    const authPriorityMatch = authSrc.match(/const priority[^=]*=\s*\{([^}]+)\}/);
+    assert.ok(authPriorityMatch, 'AuthContext priority map should exist');
+    assert.match(authPriorityMatch[1], /'org_super_admin':\s*0,\s*'ops_super_admin':\s*1[\s\S]*'owner':\s*3/);
+
+    const sessionSrc = await read('frontend/hooks/useAppSession.ts');
+    assert.match(sessionSrc, /organization_memberships[\s\S]*?\.or\('is_active\.is\.null,is_active\.eq\.true'\)/);
+    assert.match(sessionSrc, /ORG_ROLE_PRIORITY\[\(a\.role \|\| ''\)\.toLowerCase\(\)\]/);
+});
+
+test('OrgAdminDashboard checklist property selector syncs URL synchronously via handlePropertyChange', async () => {
+    const orgDashSrc = await read('frontend/components/dashboard/OrgAdminDashboard.tsx');
+    assert.match(orgDashSrc, /rawOrgRole\.includes\('org_super_admin'\)\s*\|\|\s*rawOrgRole\.includes\('org super admin'\)/);
+    assert.match(orgDashSrc, /const handlePropertyChange = \(id: string\) =>[\s\S]*?window\.history\.replaceState/);
+    assert.match(orgDashSrc, /<PropertySelectorPill[\s\S]*?onSelect=\{\(id\) => \{\s*handlePropertyChange\(id\);/);
+
+    const sopSrc = await read('frontend/components/sop/SOPDashboard.tsx');
+    assert.match(sopSrc, /if\s*\(\s*nextUrl\s*!==\s*window\.location\.href\s*\)\s*\{\s*window\.history\.replaceState/);
+});

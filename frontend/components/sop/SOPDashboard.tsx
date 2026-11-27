@@ -115,7 +115,10 @@ const SOPDashboard: React.FC<SOPDashboardProps> = ({ propertyId, propertyIds, or
                     url.searchParams.delete('completionId');
                     url.searchParams.delete('completionDate');
                 }
-                window.history.replaceState(window.history.state, '', url.toString());
+                const nextUrl = url.toString();
+                if (nextUrl !== window.location.href) {
+                    window.history.replaceState(window.history.state, '', nextUrl);
+                }
             }
         } catch {}
     }, [activeView, isLoading, propertyId, selectedTemplateId, selectedCompletionId, selectedCompletionDate, viewingCompletionId, viewingCompletionTemplateId]);
