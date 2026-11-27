@@ -85,11 +85,12 @@ interface LearningOverview {
 
 interface Props {
     propertyId?: string;
+    organizationId?: string;
     isOrgSuperAdmin?: boolean;
     onClose?: () => void;
 }
 
-export default function SOPAiLearningLoop({ propertyId, isOrgSuperAdmin = true, onClose }: Props) {
+export default function SOPAiLearningLoop({ propertyId, organizationId, isOrgSuperAdmin = true, onClose }: Props) {
     const [tab, setTab] = useState<'rules' | 'queue'>('rules');
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
@@ -116,8 +117,11 @@ export default function SOPAiLearningLoop({ propertyId, isOrgSuperAdmin = true, 
         setLoading(true);
         setError(null);
         try {
-            const propQuery = propertyId && propertyId !== 'all' ? `?propertyId=${propertyId}` : '';
-            const res = await fetch(`/api/sop/ai-learning-loop${propQuery}`);
+            const params = new URLSearchParams();
+            if (propertyId && propertyId !== 'all') params.set('propertyId', propertyId);
+            if (organizationId) params.set('organizationId', organizationId);
+            const qs = params.toString();
+            const res = await fetch(`/api/sop/ai-learning-loop${qs ? `?${qs}` : ''}`);
             if (!res.ok) {
                 const data = await res.json().catch(() => ({}));
                 throw new Error(data.error || `HTTP ${res.status}`);
@@ -135,7 +139,7 @@ export default function SOPAiLearningLoop({ propertyId, isOrgSuperAdmin = true, 
 
     useEffect(() => {
         fetchData();
-    }, [propertyId]);
+    }, [propertyId, organizationId]);
 
     const handleToggleRule = async (rule: LearnedRule) => {
         setTogglingRuleId(rule.id);

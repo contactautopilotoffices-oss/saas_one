@@ -395,38 +395,59 @@ const PropertyAdminDashboard = ({ propertyId: propPropertyId }: PropertyAdminDas
     const [preSelectedStockItemId, setPreSelectedStockItemId] = useState<string | undefined>();
     const [pendingStatusFilter, setPendingStatusFilter] = useState('all');
 
-    const userOrgRole = (membership?.org_role || '').toLowerCase();
-    const isOpsSuperAdmin = userOrgRole === 'ops_super_admin';
-    const isElevatedRole = ['ops_super_admin', 'org_super_admin', 'master_admin', 'org_admin'].includes(userOrgRole);
+    const activeOrgId =
+        property?.organization_id ||
+        membership?.properties?.find(p => p.id === propertyId)?.organization_id ||
+        ((membership?.all_org_memberships?.some(m => m.org_id === orgSlug) || membership?.org_id === orgSlug) ? orgSlug : undefined) ||
+        membership?.org_id;
+    const scopedOrgRoles = [
+        ...(activeOrgId
+            ? (membership?.all_org_memberships?.filter(m => m.org_id === activeOrgId).map(m => m.role) || [])
+            : (membership?.all_org_memberships?.map(m => m.role) || [])),
+        ...(!activeOrgId || membership?.org_id === activeOrgId ? [membership?.org_role] : []),
+    ]
+        .filter(Boolean)
+        .map(r => (r || '').toLowerCase().replace(/\s+/g, '_'));
+    const isOpsSuperAdmin = scopedOrgRoles.includes('ops_super_admin');
+    const isElevatedRole = Boolean(membership?.is_master_admin) || scopedOrgRoles.some(r => ['ops_super_admin', 'org_super_admin', 'master_admin', 'org_admin', 'owner'].includes(r));
     // Owner 2026-11-04: the Meeting Assistant stays mounted once opened (hidden on other tabs), so switching tabs never stops a recording
     const [assistantOpened, setAssistantOpened] = useState(false);
     if (openTab === 'meeting_assistant' && isOpsSuperAdmin && !assistantOpened) setAssistantOpened(true);
 
     // Organization properties for ops/super admins
     const [orgProperties, setOrgProperties] = useState<any[]>([]);
+    const [orgPropertiesLoaded, setOrgPropertiesLoaded] = useState(false);
 
     useEffect(() => {
         const fetchOrgProperties = async () => {
-            const orgId = property?.organization_id || membership?.org_id;
-            if (!orgId) return;
-            const { data } = await supabase
-                .from('properties')
-                .select('id, name, code, image_url, organization_id')
-                .eq('organization_id', orgId)
-                .is('deleted_at', null)
-                .order('name');
-            if (data && data.length > 0) {
-                setOrgProperties(data);
-                if (!activePropId) {
-                    setActivePropId(isElevatedRole ? 'all' : data[0].id);
+            if (!activeOrgId) return;
+            try {
+                const { data } = await supabase
+                    .from('properties')
+                    .select('id, name, code, image_url, organization_id')
+                    .eq('organization_id', activeOrgId)
+                    .is('deleted_at', null)
+                    .order('name');
+                if (data && data.length > 0) {
+                    setOrgProperties(data);
+                    if (!activePropId) {
+                        setActivePropId(isElevatedRole ? 'all' : data[0].id);
+                    }
+                } else if (!activePropId && (membership?.properties || []).length === 0) {
+                    setErrorMsg('No properties found for this organization.');
+                    setIsLoading(false);
                 }
+            } catch {
+                if (!activePropId) setIsLoading(false);
+            } finally {
+                setOrgPropertiesLoaded(true);
             }
         };
 
         if (isElevatedRole) {
             fetchOrgProperties();
         }
-    }, [membership?.org_id, property?.organization_id, isElevatedRole, activePropId, supabase]);
+    }, [activeOrgId, isElevatedRole, activePropId, membership?.properties, supabase]);
 
     // Property switcher — derive from all org properties for ops/super admins, or membership properties
     const assignedProperties = useMemo(() => {
@@ -459,7 +480,7 @@ const PropertyAdminDashboard = ({ propertyId: propPropertyId }: PropertyAdminDas
                 name: 'All Properties',
                 code: 'ALL',
                 address: 'All Organization Properties',
-                organization_id: orgProperties[0]?.organization_id || membership?.org_id || ''
+                organization_id: orgProperties[0]?.organization_id || activeOrgId || ''
             });
         } else {
             const found = orgProperties.find(p => p.id === id) || (membership?.properties || []).find(p => p.id === id);
@@ -556,7 +577,7 @@ const PropertyAdminDashboard = ({ propertyId: propPropertyId }: PropertyAdminDas
                 name: 'All Properties',
                 code: 'ALL',
                 address: 'All Organization Properties',
-                organization_id: orgProperties[0]?.organization_id || membership?.org_id || ''
+                organization_id: orgProperties[0]?.organization_id || activeOrgId || ''
             };
             setProperty(allPropertyObj);
             setIsLoading(false);
@@ -1067,7 +1088,7 @@ const PropertyAdminDashboard = ({ propertyId: propPropertyId }: PropertyAdminDas
                         propertyId={property.id}
                         organizationId={property.organization_id}
                         showInternalToggle={true}
-                        showCriticalToggle={isOpsSuperAdmin || userOrgRole === 'org_super_admin'}
+                        showCriticalToggle={isOpsSuperAdmin || scopedOrgRoles.includes('org_super_admin')}
                         onSuccess={(ticket) => {
                             invalidateCache('tickets-');
                             invalidateCache('spoc-dashboard-');
@@ -1242,10 +1263,18 @@ const PropertyAdminDashboard = ({ propertyId: propPropertyId }: PropertyAdminDas
                         {openTab === 'electricity_analytics' && property && <ElectricityAnalyticsDashboard propertyId={property.id} />}
                         {openTab === 'stock' && property && <StockDashboard propertyId={property.id} initialItemId={searchParams.get('scanItem') ?? undefined} />}
                         {openTab === 'checklist' && property && (
-                            <SOPDashboard
-                                propertyId={property.id === 'all' ? undefined : property.id}
-                                propertyIds={property.id === 'all' ? (assignedProperties.filter(p => p.id !== 'all').map(p => p.id).length > 0 ? assignedProperties.filter(p => p.id !== 'all').map(p => p.id) : undefined) : undefined}
-                            />
+                            property.id === 'all' && isElevatedRole && !orgPropertiesLoaded ? (
+                                <div className="p-8 space-y-4">
+                                    <Skeleton className="h-12 w-64" />
+                                    <Skeleton className="h-64 w-full" />
+                                </div>
+                            ) : (
+                                <SOPDashboard
+                                    organizationId={orgProperties[0]?.organization_id || property.organization_id || activeOrgId}
+                                    propertyId={property.id === 'all' ? undefined : property.id}
+                                    propertyIds={property.id === 'all' ? assignedProperties.filter(p => p.id !== 'all').map(p => p.id) : undefined}
+                                />
+                            )
                         )}
                         {openTab === 'ppm' && property && (
                             <PPMModule

@@ -117,7 +117,7 @@ const AdminBookingList: React.FC<AdminBookingListProps> = ({ propertyId }) => {
                 .select('role')
                 .eq('user_id', user.id)
                 .eq('property_id', propertyId)
-                .eq('is_active', true)
+                .or('is_active.is.null,is_active.eq.true')
                 .maybeSingle();
 
             if (membership) {
@@ -130,6 +130,26 @@ const AdminBookingList: React.FC<AdminBookingListProps> = ({ propertyId }) => {
                         .eq('skill_code', 'technical')
                         .maybeSingle();
                     setIsTechnical(!!skill);
+                }
+                return;
+            }
+
+            // Fallback to org-level role for ops_super_admin / org_super_admin / org_admin without property row
+            const { data: prop } = await supabase
+                .from('properties')
+                .select('organization_id')
+                .eq('id', propertyId)
+                .maybeSingle();
+            if (prop?.organization_id) {
+                const { data: orgMem } = await supabase
+                    .from('organization_memberships')
+                    .select('role')
+                    .eq('user_id', user.id)
+                    .eq('organization_id', prop.organization_id)
+                    .or('is_active.is.null,is_active.eq.true')
+                    .maybeSingle();
+                if (orgMem?.role) {
+                    setUserRole(orgMem.role.toLowerCase());
                 }
             }
         };
@@ -279,7 +299,7 @@ const AdminBookingList: React.FC<AdminBookingListProps> = ({ propertyId }) => {
         if (isBookingPast(booking.booking_date, booking.start_time)) return false;
         if (userRole === 'master_admin') return true;
         if (currentUserId === booking.user_id) return true;
-        if (userRole === 'property_admin' || userRole === 'org_super_admin' || userRole === 'org_admin') return true;
+        if (['property_admin', 'org_super_admin', 'ops_super_admin', 'org_admin'].includes(userRole || '')) return true;
         if ((userRole === 'staff' || userRole === 'mst') && isTechnical) return true;
         return false;
     };

@@ -1,5 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/frontend/utils/supabase/server';
+import { hasAnyOrgOrPropRole } from '@/backend/lib/meetingRooms/bookingVisibility';
+
+const SLOT_PROP_ROLES = ['property_admin', 'staff', 'mst', 'ops_super_admin'] as const;
+const SLOT_ORG_ROLES = ['org_admin', 'org_super_admin', 'ops_super_admin', 'master_admin'] as const;
 
 /**
  * PUT /api/meeting-room-slots/[id]
@@ -19,25 +23,8 @@ export async function PUT(request: NextRequest, { params }: { params: Promise<{ 
         const { start_time, end_time } = body;
 
         // Validation for Admin
-        const { data: orgMembership } = await supabase
-            .from('organization_memberships')
-            .select('role')
-            .eq('user_id', user.id)
-            .eq('role', 'org_admin')
-            .limit(1);
-
-        const { data: propMembership } = await supabase
-            .from('property_memberships')
-            .select('role')
-            .eq('user_id', user.id)
-            .in('role', ['property_admin', 'staff', 'mst'])
-            .limit(1);
-
-        const isSuperAdmin = orgMembership && orgMembership.length > 0;
-        const isPropertyAdmin = propMembership && propMembership.length > 0;
-
-        if (!isSuperAdmin && !isPropertyAdmin) {
-             return NextResponse.json({ error: 'Forbidden: Insufficient permissions' }, { status: 403 });
+        if (!(await hasAnyOrgOrPropRole(user.id, SLOT_PROP_ROLES, SLOT_ORG_ROLES))) {
+            return NextResponse.json({ error: 'Forbidden: Insufficient permissions' }, { status: 403 });
         }
 
         const { data: slot, error: updateError } = await supabase
@@ -74,25 +61,8 @@ export async function DELETE(request: NextRequest, { params }: { params: Promise
         }
 
         // Validation for Admin
-        const { data: orgMembership } = await supabase
-            .from('organization_memberships')
-            .select('role')
-            .eq('user_id', user.id)
-            .eq('role', 'org_admin')
-            .limit(1);
-
-        const { data: propMembership } = await supabase
-            .from('property_memberships')
-            .select('role')
-            .eq('user_id', user.id)
-            .in('role', ['property_admin', 'staff', 'mst'])
-            .limit(1);
-
-        const isSuperAdmin = orgMembership && orgMembership.length > 0;
-        const isPropertyAdmin = propMembership && propMembership.length > 0;
-
-        if (!isSuperAdmin && !isPropertyAdmin) {
-             return NextResponse.json({ error: 'Forbidden: Insufficient permissions' }, { status: 403 });
+        if (!(await hasAnyOrgOrPropRole(user.id, SLOT_PROP_ROLES, SLOT_ORG_ROLES))) {
+            return NextResponse.json({ error: 'Forbidden: Insufficient permissions' }, { status: 403 });
         }
 
         const { error: deleteError } = await supabase

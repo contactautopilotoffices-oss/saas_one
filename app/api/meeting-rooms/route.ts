@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/frontend/utils/supabase/server';
+import { hasPropertyOrOrgRole } from '@/backend/lib/meetingRooms/bookingVisibility';
 
 /**
  * GET /api/meeting-rooms
@@ -79,38 +80,15 @@ export async function POST(request: NextRequest) {
             );
         }
 
-        // Check permissions (must be property_admin/staff for the property OR org_admin for the organization)
-        const { data: membership, error: memError } = await supabase
-            .from('property_memberships')
-            .select('role')
-            .eq('user_id', user.id)
-            .eq('property_id', propertyId)
-            .single();
-
-        if (memError || !membership || !['property_admin', 'staff', 'mst'].includes(membership.role)) {
-            // Check if user is an org_admin for this property's organization
-            const { data: property, error: propError } = await supabase
-                .from('properties')
-                .select('organization_id')
-                .eq('id', propertyId)
-                .single();
-
-            if (!propError && property) {
-                const { data: orgMembership } = await supabase
-                    .from('organization_memberships')
-                    .select('role')
-                    .eq('user_id', user.id)
-                    .eq('organization_id', property.organization_id)
-                    .single();
-
-                if (orgMembership?.role === 'org_admin' || orgMembership?.role === 'org_super_admin') {
-                    // Org admin has access - proceed
-                } else {
-                    return NextResponse.json({ error: 'Forbidden: Insufficient permissions' }, { status: 403 });
-                }
-            } else {
-                return NextResponse.json({ error: 'Forbidden: Insufficient permissions' }, { status: 403 });
-            }
+        // Check permissions (must be property_admin/staff/ops_super_admin for property OR org_admin/org_super_admin/ops_super_admin/master_admin for org)
+        const hasAccess = await hasPropertyOrOrgRole(
+            user.id,
+            propertyId,
+            ['property_admin', 'staff', 'mst', 'ops_super_admin'],
+            ['org_admin', 'org_super_admin', 'ops_super_admin', 'master_admin']
+        );
+        if (!hasAccess) {
+            return NextResponse.json({ error: 'Forbidden: Insufficient permissions' }, { status: 403 });
         }
 
         // Fetch organization_id from property

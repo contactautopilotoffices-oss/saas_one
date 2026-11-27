@@ -1,52 +1,15 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/frontend/utils/supabase/server';
 import { supabaseAdmin } from '@/backend/lib/supabase/admin';
+import { hasPropertyOrOrgRole } from '@/backend/lib/meetingRooms/bookingVisibility';
 
 async function checkMeetingRoomPermission(userId: string, propertyId: string): Promise<boolean> {
-    // 1. Check user global role in users table
-    const { data: userRecord } = await supabaseAdmin
-        .from('users')
-        .select('role')
-        .eq('id', userId)
-        .maybeSingle();
-
-    if (userRecord && ['master_admin', 'ops_super_admin', 'org_admin', 'admin', 'super_admin'].includes(userRecord.role)) {
-        return true;
-    }
-
-    // 2. Check property membership role
-    const { data: membership } = await supabaseAdmin
-        .from('property_memberships')
-        .select('role')
-        .eq('user_id', userId)
-        .eq('property_id', propertyId)
-        .maybeSingle();
-
-    if (membership && ['property_admin', 'staff', 'mst', 'admin', 'super_admin', 'ops_super_admin', 'org_admin'].includes(membership.role)) {
-        return true;
-    }
-
-    // 3. Check organization membership role
-    const { data: property } = await supabaseAdmin
-        .from('properties')
-        .select('organization_id')
-        .eq('id', propertyId)
-        .maybeSingle();
-
-    if (property?.organization_id) {
-        const { data: orgMembership } = await supabaseAdmin
-            .from('organization_memberships')
-            .select('role')
-            .eq('user_id', userId)
-            .eq('organization_id', property.organization_id)
-            .maybeSingle();
-
-        if (orgMembership && ['org_admin', 'org_super_admin', 'admin', 'master_admin'].includes(orgMembership.role)) {
-            return true;
-        }
-    }
-
-    return false;
+    return hasPropertyOrOrgRole(
+        userId,
+        propertyId,
+        ['property_admin', 'staff', 'mst', 'admin', 'super_admin', 'ops_super_admin', 'org_admin'],
+        ['org_admin', 'org_super_admin', 'ops_super_admin', 'admin', 'master_admin', 'super_admin']
+    );
 }
 
 /**

@@ -33,7 +33,7 @@ export default function ChecklistDeepLinkPage() {
             // Fetch template
             const { data: tmpl, error: tmplErr } = await supabase
                 .from('sop_templates')
-                .select('*, property:properties(id, name)')
+                .select('*, property:properties(id, name, organization_id)')
                 .eq('id', templateId)
                 .eq('is_active', true)
                 .single();
@@ -63,16 +63,37 @@ export default function ChecklistDeepLinkPage() {
                 }
             }
 
-            // Check if user is assigned or is admin
-            const { data: membership } = await supabase
-                .from('property_memberships')
-                .select('role')
-                .eq('user_id', currentUser.id)
-                .eq('property_id', tmpl.property?.id)
-                .eq('is_active', true)
-                .maybeSingle();
+            // Check if user is assigned or is admin (property-level, org-level including ops_super_admin, or master admin)
+            const orgId = tmpl.organization_id || tmpl.property?.organization_id;
+            const [{ data: propMemberships }, { data: orgMemberships }, { data: userProfile }] = await Promise.all([
+                tmpl.property?.id
+                    ? supabase
+                        .from('property_memberships')
+                        .select('role')
+                        .eq('user_id', currentUser.id)
+                        .eq('property_id', tmpl.property.id)
+                        .or('is_active.is.null,is_active.eq.true')
+                    : Promise.resolve({ data: [] as { role?: string }[] }),
+                orgId
+                    ? supabase
+                        .from('organization_memberships')
+                        .select('role')
+                        .eq('user_id', currentUser.id)
+                        .eq('organization_id', orgId)
+                        .or('is_active.is.null,is_active.eq.true')
+                    : Promise.resolve({ data: [] as { role?: string }[] }),
+                supabase
+                    .from('users')
+                    .select('is_master_admin')
+                    .eq('id', currentUser.id)
+                    .maybeSingle(),
+            ]);
 
-            const isAdmin = ['property_admin', 'org_admin', 'org_super_admin', 'master_admin'].includes(membership?.role || '');
+            const normalize = (r?: string | null) => (r || '').toLowerCase().replace(/\s+/g, '_');
+            const adminRoles = ['property_admin', 'org_admin', 'org_super_admin', 'master_admin', 'ops_super_admin', 'owner', 'admin'];
+            const isAdmin = Boolean(userProfile?.is_master_admin) ||
+                (propMemberships || []).some((m: { role?: string }) => adminRoles.includes(normalize(m.role))) ||
+                (orgMemberships || []).some((m: { role?: string }) => adminRoles.includes(normalize(m.role)));
             // Empty assigned_to means open to all staff (consistent with SOPDueAlerts / SOPCompletionHistory)
             const isOpenToAll = !Array.isArray(tmpl.assigned_to) || tmpl.assigned_to.length === 0;
             const assignedToMe = isOpenToAll || tmpl.assigned_to.includes(currentUser.id);

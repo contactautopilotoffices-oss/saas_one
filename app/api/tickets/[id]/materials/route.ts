@@ -162,14 +162,23 @@ export async function PATCH(
 
         // Permission check
         const isAssignee = requestRecord.assignee_uid === user.id;
-        const { data: membership } = await adminSupabase
-            .from('organization_memberships')
-            .select('role')
-            .eq('user_id', user.id)
-            .eq('organization_id', requestRecord.organization_id)
-            .single();
-        
-        const isHO = ['org_super_admin', 'master_admin', 'procurement'].includes(membership?.role || '');
+        const [{ data: profile }, { data: orgMemberships }] = await Promise.all([
+            adminSupabase
+                .from('users')
+                .select('is_master_admin')
+                .eq('id', user.id)
+                .maybeSingle(),
+            adminSupabase
+                .from('organization_memberships')
+                .select('role')
+                .eq('user_id', user.id)
+                .eq('organization_id', requestRecord.organization_id)
+                .or('is_active.is.null,is_active.eq.true'),
+        ]);
+
+        const isHO = Boolean(profile?.is_master_admin) || (orgMemberships || []).some(m =>
+            ['org_super_admin', 'ops_super_admin', 'master_admin', 'procurement'].includes((m.role || '').toLowerCase().trim())
+        );
         
         if (!isAssignee && !isHO) {
             return NextResponse.json({ error: 'Forbidden' }, { status: 403 });

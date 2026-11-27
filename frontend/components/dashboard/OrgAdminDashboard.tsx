@@ -200,12 +200,17 @@ const OrgAdminDashboard = () => {
     const [showTicketCreateModal, setShowTicketCreateModal] = useState(false);
     const [selectedPropertyId, setSelectedPropertyId] = useState('all');
     const [isScannerModalOpen, setIsScannerModalOpen] = useState(false);
+    const [propertiesLoaded, setPropertiesLoaded] = useState(false);
     const [openDropdown, setOpenDropdown] = useState<'prop' | 'checklist' | 'escalation' | 'rooms' | null>(null);
-    const [checklistPropertyId, setChecklistPropertyId] = useState<string>('all');
+    const [checklistPropertyId, setChecklistPropertyId] = useState<string>(() => searchParams.get('propertyId') || 'all');
     const [escalationPropertyId, setEscalationPropertyId] = useState<string>('all');
     const [roomsPropertyId, setRoomsPropertyId] = useState<string>('all');
     const [userRole, setUserRole] = useState<string>('User');
-    const rawOrgRole = (membership?.org_role || userRole || '').toLowerCase();
+    const scopedMembershipRole = org?.id
+        ? (membership?.all_org_memberships?.find((m) => m.org_id === org.id)?.role ||
+            (membership?.org_id === org.id ? membership?.org_role : undefined))
+        : membership?.org_role;
+    const rawOrgRole = (scopedMembershipRole || userRole || membership?.org_role || '').toLowerCase();
     const isOpsSuperAdmin = rawOrgRole.includes('ops_super_admin') || rawOrgRole.includes('ops super admin');
     // Reports → App usage is for org super admins only (the API enforces the same rule).
     const isOrgSuperAdmin = rawOrgRole.includes('org_super_admin');
@@ -241,8 +246,10 @@ const OrgAdminDashboard = () => {
 
     // Only restore subordinate filters. The validated URL owns the active tab.
     useEffect(() => {
+        const propParam = searchParams.get('propertyId') || 'all';
         setPendingStatusFilter(searchParams.get('filter') || 'all');
-        setSelectedPropertyId(searchParams.get('propertyId') || 'all');
+        setSelectedPropertyId(propParam);
+        setChecklistPropertyId(propParam);
         const view = searchParams.get('view');
         setRequestsView(view === 'board' || view === 'flow' ? view : 'list');
     }, [searchParams]);
@@ -502,7 +509,8 @@ const OrgAdminDashboard = () => {
             .select('role')
             .eq('organization_id', org.id)
             .eq('user_id', user.id)
-            .single();
+            .or('is_active.is.null,is_active.eq.true')
+            .maybeSingle();
 
         if (data?.role) {
             // Format role for display (e.g., 'org_admin' -> 'Org Admin')
@@ -569,34 +577,42 @@ const OrgAdminDashboard = () => {
 
         const cacheKey = `org-properties-${org.id}`;
         const cached = getCachedData(cacheKey);
-        if (cached) setProperties(cached);
+        if (cached) {
+            setProperties(cached);
+            setPropertiesLoaded(true);
+        }
 
-        const { data: props, error: propError } = await supabase
-            .from('properties')
-            .select('*')
-            .eq('organization_id', org.id)
-            .order('created_at', { ascending: false });
+        try {
+            const { data: props, error: propError } = await supabase
+                .from('properties')
+                .select('*')
+                .eq('organization_id', org.id)
+                .is('deleted_at', null)
+                .order('created_at', { ascending: false });
 
-        if (propError || !props) return;
+            if (propError || !props) return;
 
-        // Fetch ticket_validation feature status for all these properties
-        const { data: features, error: featError } = await supabase
-            .from('property_features')
-            .select('property_id, is_enabled')
-            .eq('feature_key', 'ticket_validation')
-            .in('property_id', props.map(p => p.id));
+            // Fetch ticket_validation feature status for all these properties
+            const { data: features, error: featError } = await supabase
+                .from('property_features')
+                .select('property_id, is_enabled')
+                .eq('feature_key', 'ticket_validation')
+                .in('property_id', props.map(p => p.id));
 
-        if (!featError && features) {
-            const featureMap = new Map(features.map(f => [f.property_id, f.is_enabled]));
-            const updatedProps = props.map(p => ({
-                ...p,
-                validation_enabled: featureMap.has(p.id) ? featureMap.get(p.id) : true
-            }));
-            setProperties(updatedProps);
-            setCachedData(cacheKey, updatedProps);
-        } else {
-            setProperties(props);
-            setCachedData(cacheKey, props);
+            if (!featError && features) {
+                const featureMap = new Map(features.map(f => [f.property_id, f.is_enabled]));
+                const updatedProps = props.map(p => ({
+                    ...p,
+                    validation_enabled: featureMap.has(p.id) ? featureMap.get(p.id) : true
+                }));
+                setProperties(updatedProps);
+                setCachedData(cacheKey, updatedProps);
+            } else {
+                setProperties(props);
+                setCachedData(cacheKey, props);
+            }
+        } finally {
+            setPropertiesLoaded(true);
         }
     }, [org, supabase]);
 
@@ -1850,24 +1866,29 @@ const OrgAdminDashboard = () => {
                         {activeTab === 'checklist' && (
                             <div key="checklist-tab" className="w-full min-h-screen bg-slate-50/50">
                                 <AgentPulse orgId={org?.id} module={AGENT_PULSE_BY_TAB.checklist} consoleTab="agent_console" className="mb-3" />
-                                <SOPDashboard
-                                    propertyId={checklistPropertyId === 'all' ? undefined : checklistPropertyId}
-                                    propertyIds={checklistPropertyId === 'all' ? allPropertyIds : undefined}
-                                    headerRight={<NotificationBell />}
-                                    propertySelector={
-                                        <PropertySelectorPill
-                                            properties={properties}
-                                            selectedId={checklistPropertyId}
-                                            isOpen={openDropdown === 'checklist'}
-                                            onToggle={() => setOpenDropdown(openDropdown === 'checklist' ? null : 'checklist')}
-                                            onSelect={(id) => {
-                                                setChecklistPropertyId(id);
-                                                setOpenDropdown(null);
-                                            }}
-                                            onClose={() => setOpenDropdown(null)}
-                                        />
-                                    }
-                                />
+                                {!org?.id || (checklistPropertyId === 'all' && !propertiesLoaded) ? (
+                                    <TabLoading />
+                                ) : (
+                                    <SOPDashboard
+                                        organizationId={org?.id}
+                                        propertyId={checklistPropertyId === 'all' ? undefined : checklistPropertyId}
+                                        propertyIds={checklistPropertyId === 'all' ? allPropertyIds : undefined}
+                                        headerRight={<NotificationBell />}
+                                        propertySelector={
+                                            <PropertySelectorPill
+                                                properties={properties}
+                                                selectedId={checklistPropertyId}
+                                                isOpen={openDropdown === 'checklist'}
+                                                onToggle={() => setOpenDropdown(openDropdown === 'checklist' ? null : 'checklist')}
+                                                onSelect={(id) => {
+                                                    setChecklistPropertyId(id);
+                                                    setOpenDropdown(null);
+                                                }}
+                                                onClose={() => setOpenDropdown(null)}
+                                            />
+                                        }
+                                    />
+                                )}
                             </div>
                         )}
 

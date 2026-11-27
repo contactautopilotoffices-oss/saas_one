@@ -1,6 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/backend/lib/supabase/admin';
 import { createClient } from '@/frontend/utils/supabase/server';
+import { hasPropertyOrOrgRole } from '@/backend/lib/meetingRooms/bookingVisibility';
+
+const CREDIT_ADMIN_PROP_ROLES = ['property_admin', 'staff', 'org_admin', 'ops_super_admin'] as const;
+const CREDIT_ADMIN_ORG_ROLES = ['org_super_admin', 'ops_super_admin', 'org_admin', 'master_admin'] as const;
 
 /**
  * GET /api/meeting-room-credits?propertyId=&userId=
@@ -20,38 +24,7 @@ export async function GET(request: NextRequest) {
 
         if (!propertyId) return NextResponse.json({ error: 'propertyId required' }, { status: 400 });
 
-        // 1. Check Property Level
-        const { data: membership } = await supabaseAdmin
-            .from('property_memberships')
-            .select('role')
-            .eq('property_id', propertyId)
-            .eq('user_id', user.id)
-            .maybeSingle();
-
-        let isAdmin = ['property_admin', 'staff', 'org_admin'].includes(membership?.role || '');
-
-        // 2. Check System/Org Level if not property admin
-        if (!isAdmin) {
-            const [profileRes, propertyRes] = await Promise.all([
-                supabaseAdmin.from('users').select('is_master_admin').eq('id', user.id).single(),
-                supabaseAdmin.from('properties').select('organization_id').eq('id', propertyId).single()
-            ]);
-
-            if (profileRes.data?.is_master_admin) {
-                isAdmin = true;
-            } else if (propertyRes.data?.organization_id) {
-                const { data: orgMember } = await supabaseAdmin
-                    .from('organization_memberships')
-                    .select('role')
-                    .eq('organization_id', propertyRes.data.organization_id)
-                    .eq('user_id', user.id)
-                    .maybeSingle();
-                
-                if (['org_super_admin', 'org_admin'].includes(orgMember?.role || '')) {
-                    isAdmin = true;
-                }
-            }
-        }
+        const isAdmin = await hasPropertyOrOrgRole(user.id, propertyId, CREDIT_ADMIN_PROP_ROLES, CREDIT_ADMIN_ORG_ROLES);
 
         if (isAdmin) {
             // Admin: fetch all tenant/company credits with info
@@ -120,38 +93,7 @@ export async function POST(request: NextRequest) {
             return NextResponse.json({ error: 'propertyId, (userId or companyId), and at least one of monthlyHours/remainingHours required' }, { status: 400 });
         }
 
-        // 1. Check Property Level
-        const { data: membership } = await supabaseAdmin
-            .from('property_memberships')
-            .select('role')
-            .eq('property_id', propertyId)
-            .eq('user_id', user.id)
-            .maybeSingle();
-
-        let canWrite = ['property_admin', 'staff', 'org_admin'].includes(membership?.role || '');
-
-        // 2. Check System/Org Level if not property admin
-        if (!canWrite) {
-            const [profileRes, propertyRes] = await Promise.all([
-                supabaseAdmin.from('users').select('is_master_admin').eq('id', user.id).single(),
-                supabaseAdmin.from('properties').select('organization_id').eq('id', propertyId).single()
-            ]);
-
-            if (profileRes.data?.is_master_admin) {
-                canWrite = true;
-            } else if (propertyRes.data?.organization_id) {
-                const { data: orgMember } = await supabaseAdmin
-                    .from('organization_memberships')
-                    .select('role')
-                    .eq('organization_id', propertyRes.data.organization_id)
-                    .eq('user_id', user.id)
-                    .maybeSingle();
-                
-                if (['org_super_admin', 'org_admin'].includes(orgMember?.role || '')) {
-                    canWrite = true;
-                }
-            }
-        }
+        const canWrite = await hasPropertyOrOrgRole(user.id, propertyId, CREDIT_ADMIN_PROP_ROLES, CREDIT_ADMIN_ORG_ROLES);
 
         if (!canWrite) {
             return NextResponse.json({ error: 'Forbidden' }, { status: 403 });

@@ -462,10 +462,14 @@ const TicketsView: React.FC<TicketsViewProps> = ({ propertyId, organizationId, c
     const [hasUnspecified, setHasUnspecified] = useState(false);
 
     // Owner 2026-11-03: + 'tech' (the Tech console shows this list exactly as the Super Admin console does)
-    const isHighAdmin = membership?.org_role === 'org_super_admin' || 
-                        membership?.org_role === 'owner' ||
-                        membership?.org_role === 'tech' ||
-                        membership?.properties.some(p => p.role === 'property_admin');
+    const scopedOrgRole = (organizationId
+        ? (membership?.all_org_memberships?.find(m => m.org_id === organizationId)?.role ||
+            (membership?.org_id === organizationId ? membership?.org_role : undefined))
+        : membership?.org_role) || membership?.org_role || '';
+    const normalizedOrgRole = scopedOrgRole.toLowerCase().trim();
+    const isHighAdmin = Boolean(membership?.is_master_admin) ||
+                        ['org_super_admin', 'ops_super_admin', 'org_admin', 'master_admin', 'owner', 'tech'].includes(normalizedOrgRole) ||
+                        (membership?.properties || []).some(p => ['property_admin', 'ops_super_admin'].includes((p.role || '').toLowerCase()));
     
     // Note: The cacheKey logic heavily depends on the filter values so changes will cleanly bypass legacy state cache instances
     const cacheKey = `tickets-${lockedAssigneeId ? `mine-${lockedAssigneeId}-` : ''}${propertyId ?? organizationId ?? 'all'}-${statusKey}-${categoryFilter}-${raisedByFilter}-${resolvedByFilter}-${assignedToFilter}-${floorFilter}-${sortBy}-${searchQuery}-${dateFrom}-${dateTo}`;
@@ -1015,7 +1019,7 @@ const TicketsView: React.FC<TicketsViewProps> = ({ propertyId, organizationId, c
     // The phone sheet's "Clear all" also resets status and team, which live in the same sheet.
     const clearAllFilters = () => { clearFilters(); setSelectedStatuses([]); setCategoryFilter('all'); };
 
-    const showFlowMap = Boolean(propertyId && !lockedAssigneeId && !['org_super_admin', 'master_admin', 'owner', 'tech'].includes(membership?.org_role || ''));
+    const showFlowMap = Boolean(propertyId && !lockedAssigneeId && !membership?.is_master_admin && !['org_super_admin', 'ops_super_admin', 'master_admin', 'owner', 'tech'].includes(normalizedOrgRole));
     const flowMapButton = showFlowMap && (
         <button
             onClick={() => router.push(`/property/${propertyId}/flow-map?from=requests`)}

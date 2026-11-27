@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/frontend/utils/supabase/server';
 import { supabaseAdmin } from '@/backend/lib/supabase/admin';
-import { guardProperty } from '@/backend/lib/auth/callerAccess';
+import { guardProperty, resolveCaller, isCallerError, orgRolesIn } from '@/backend/lib/auth/callerAccess';
 
 export async function GET(
     request: NextRequest,
@@ -87,17 +87,11 @@ export async function POST(
         const body = await request.json();
         const { templateId, completionDate, notes } = body;
 
-        // Fetch user role for this property to allow admin bypass (e.g. for historical edits or other special logic)
-        const { data: membership } = await supabaseAdmin
-            .from('property_memberships')
-            .select('role')
-            .eq('property_id', propertyId)
-            .eq('user_id', user.id)
-            .eq('is_active', true)
-            .maybeSingle();
-        
-        const userRole = (membership?.role || '').toLowerCase();
-        const isAdmin = ['property_admin', 'org_admin', 'org_super_admin', 'master_admin', 'ops_super_admin'].includes(userRole);
+        const caller = await resolveCaller(request);
+        if (isCallerError(caller)) return caller;
+        const propRole = caller.propertyMemberships.find(m => m.property_id === propertyId)?.role || '';
+        const adminRoles = ['property_admin', 'org_admin', 'org_super_admin', 'master_admin', 'ops_super_admin'];
+        let isAdmin = caller.isMasterAdmin || adminRoles.includes(propRole);
 
         if (!templateId) {
             return NextResponse.json({ error: 'templateId is required' }, { status: 400 });
@@ -112,6 +106,10 @@ export async function POST(
 
         if (propError || !property) {
             return NextResponse.json({ error: 'Property not found' }, { status: 404 });
+        }
+
+        if (!isAdmin && property.organization_id) {
+            isAdmin = orgRolesIn(caller, property.organization_id).some(r => adminRoles.includes(r));
         }
 
         // Verify template exists and get its items (admin bypasses RLS)
@@ -180,7 +178,7 @@ export async function POST(
         // ── Compute slot_time and due_at ──────────────────────────────────────
         let slotTime: string | null = null;
         let dueAt: string | null = null;
-        
+
         const hourlyMatch = (template as any).frequency?.match(/^every_(\d+)_hours?$/);
         if (hourlyMatch && startTime) {
             const intervalH = parseInt(hourlyMatch[1]);
@@ -230,10 +228,10 @@ export async function POST(
                 .eq('template_id', templateId)
                 .eq('due_at', dueAt)
                 .maybeSingle();
-            
+
             existingCompletion = data;
-        } 
-        
+        }
+
         // If we still don't have an existing completion, do a final fallback search 
         // prioritizing any active pending/in-progress completion for today so in-flight work is never lost
         if (!existingCompletion) {
@@ -289,50 +287,50 @@ export async function POST(
                     .eq('template_id', templateId)
                     .eq('due_at', dueAt)
                     .maybeSingle();
-                
+
                 if (!retry) {
                     return NextResponse.json({ error: 'Failed to create checklist session: ' + insertError.message }, { status: 500 });
                 }
                 existingCompletion = retry;
             } else {
-            // NOTE: sop_completion_items are auto-populated via fn_clone_sop_checklist_items trigger 
-            // after inserting into sop_completions. We just need to refetch to get the items.
-            const { data: finalCompletion } = await supabaseAdmin
+                // NOTE: sop_completion_items are auto-populated via fn_clone_sop_checklist_items trigger 
+                // after inserting into sop_completions. We just need to refetch to get the items.
+                const { data: finalCompletion } = await supabaseAdmin
+                    .from('sop_completions')
+                    .select('*, items:sop_completion_items(*)')
+                    .eq('id', newCompletion.id)
+                    .single();
+
+                existingCompletion = finalCompletion;
+            }
+        }
+
+        // ── Self-heal: insert any missing sop_completion_items rows ──────────
+        const templateItems: any[] = (template as any)?.items || [];
+        const existingIds = new Set((existingCompletion.items || []).map((i: any) => i.checklist_item_id));
+        const missing = templateItems.filter((ti: any) => !existingIds.has(ti.id));
+
+        if (missing.length > 0) {
+            const completionItems = missing.map((ti: any) => ({
+                completion_id: existingCompletion.id,
+                checklist_item_id: ti.id,
+                is_checked: false
+            }));
+
+            await supabaseAdmin
+                .from('sop_completion_items')
+                .insert(completionItems);
+
+            const { data: healed } = await supabaseAdmin
                 .from('sop_completions')
                 .select('*, items:sop_completion_items(*)')
-                .eq('id', newCompletion.id)
+                .eq('id', existingCompletion.id)
                 .single();
-            
-            existingCompletion = finalCompletion;
+
+            existingCompletion = healed;
         }
-    }
 
-    // ── Self-heal: insert any missing sop_completion_items rows ──────────
-    const templateItems: any[] = (template as any)?.items || [];
-    const existingIds = new Set((existingCompletion.items || []).map((i: any) => i.checklist_item_id));
-    const missing = templateItems.filter((ti: any) => !existingIds.has(ti.id));
-
-    if (missing.length > 0) {
-        const completionItems = missing.map((ti: any) => ({
-            completion_id: existingCompletion.id,
-            checklist_item_id: ti.id,
-            is_checked: false
-        }));
-
-        await supabaseAdmin
-            .from('sop_completion_items')
-            .insert(completionItems);
-
-        const { data: healed } = await supabaseAdmin
-            .from('sop_completions')
-            .select('*, items:sop_completion_items(*)')
-            .eq('id', existingCompletion.id)
-            .single();
-
-        existingCompletion = healed;
-    }
-
-    // Update to in_progress if it was just pending/missed
+        // Update to in_progress if it was just pending/missed
         if (existingCompletion.status === 'pending' || existingCompletion.status === 'missed') {
             const [sH, sM] = (startTime ?? '00:00').slice(0, 5).split(':').map(Number);
             const [eH, eM] = (endTime ?? '23:59').slice(0, 5).split(':').map(Number);
@@ -347,14 +345,14 @@ export async function POST(
 
             await supabaseAdmin
                 .from('sop_completions')
-                .update({ 
-                    status: 'in_progress', 
-                    started_at: new Date().toISOString(), 
+                .update({
+                    status: 'in_progress',
+                    started_at: new Date().toISOString(),
                     completed_by: user.id,
                     is_late: isLate
                 })
                 .eq('id', existingCompletion.id);
-            
+
             existingCompletion.status = 'in_progress';
             existingCompletion.started_at = new Date().toISOString();
             existingCompletion.completed_by = user.id;

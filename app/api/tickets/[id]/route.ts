@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/frontend/utils/supabase/server';
 import { createAdminClient } from '@/frontend/utils/supabase/admin';
 import { logAudit } from '@/backend/lib/audit';
-import { resolveCaller, isCallerError, canUseProperty } from '@/backend/lib/auth/callerAccess';
+import { resolveCaller, isCallerError, canUseProperty, orgRolesIn, ORG_ADMIN_ROLES } from '@/backend/lib/auth/callerAccess';
 
 /**
  * GET /api/tickets/[id]
@@ -584,50 +584,22 @@ export async function PATCH(
         if (photo_after_url !== undefined) updates.photo_after_url = photo_after_url;
         if (rating) updates.rating = rating;
 
-        // Allow editing title and description for Creator, Property Admin, or MST
+        // Allow editing title and description for Creator, Property Admin, Org/Ops Super Admin, MST, Staff, or Org Tech
         if (title || description) {
-            let canEditContent = false;
+            let canEditContent = currentTicket.raised_by === user.id;
 
-            if (currentTicket.raised_by === user.id) {
-                canEditContent = true;
-            } else {
-                // Check Property Membership (Admin or MST/Staff)
-                const { data: member } = await supabase
-                    .from('property_memberships')
-                    .select('role')
-                    .eq('user_id', user.id)
-                    .eq('property_id', currentTicket.property_id)
-                    .eq('is_active', true)
-                    .maybeSingle();
+            if (!canEditContent) {
+                const caller = await resolveCaller(request);
+                if (isCallerError(caller)) return caller;
+                const orgRoles = currentTicket.organization_id ? orgRolesIn(caller, currentTicket.organization_id) : [];
+                const propRoles = caller.propertyMemberships
+                    .filter(m => m.property_id === currentTicket.property_id)
+                    .map(m => m.role);
 
-                if (member && ['PROPERTY_ADMIN', 'property_admin', 'MST', 'mst', 'STAFF', 'staff'].includes(member.role)) {
-                    canEditContent = true;
-                }
-
-                // Check Org Super Admin
-                if (!canEditContent && currentTicket.organization_id) {
-                    const { data: om } = await supabase
-                        .from('organization_memberships')
-                        .select('role')
-                        .eq('user_id', user.id)
-                        .eq('organization_id', currentTicket.organization_id)
-                        .eq('is_active', true)
-                        .eq('role', 'ORG_SUPER_ADMIN')
-                        .maybeSingle();
-
-                    if (om) canEditContent = true;
-                }
-
-                // Owner 2026-11-03: the org-level Tech team has the Super Admin console's Requests tab, with its actions,
-                // for its own organisation
-                if (!canEditContent && currentTicket.organization_id) {
-                    const { data: techRows } = await adminSupabase
-                        .from('organization_memberships')
-                        .select('role, is_active')
-                        .eq('user_id', user.id)
-                        .eq('organization_id', currentTicket.organization_id);
-                    if ((techRows || []).some(m => (m.role || '').toLowerCase().trim() === 'tech' && m.is_active !== false)) canEditContent = true;
-                }
+                canEditContent =
+                    caller.isMasterAdmin ||
+                    propRoles.some(r => ['property_admin', 'ops_super_admin', 'org_admin', 'org_super_admin', 'master_admin', 'owner', 'admin', 'mst', 'staff'].includes(r)) ||
+                    orgRoles.some(r => [...ORG_ADMIN_ROLES, 'owner', 'admin', 'tech'].includes(r));
             }
 
             if (!canEditContent) {
@@ -724,7 +696,7 @@ export async function DELETE(
             canDelete = true;
         }
 
-        const adminRoles = ['PROPERTY_ADMIN', 'property_admin', 'ORG_ADMIN', 'org_admin', 'org_super_admin', 'ORG_SUPER_ADMIN', 'admin', 'ADMIN', 'manager', 'MANAGER', 'manager_executive', 'super_admin', 'SUPER_ADMIN', 'staff', 'STAFF', 'mst', 'MST'];
+        const adminRoles = ['PROPERTY_ADMIN', 'property_admin', 'ORG_ADMIN', 'org_admin', 'org_super_admin', 'ORG_SUPER_ADMIN', 'ops_super_admin', 'OPS_SUPER_ADMIN', 'owner', 'OWNER', 'admin', 'ADMIN', 'manager', 'MANAGER', 'manager_executive', 'super_admin', 'SUPER_ADMIN', 'staff', 'STAFF', 'mst', 'MST'];
 
         // Check Property Admin/Manager Roles
         if (!canDelete && ticket.property_id) {
@@ -736,18 +708,19 @@ export async function DELETE(
 
 
             const validPm = pmList?.find(m =>
-                adminRoles.includes(m.role) ||
-                adminRoles.includes(m.role?.toLowerCase()) ||
-                adminRoles.includes(m.role?.toUpperCase())
+                m.is_active !== false && (
+                    adminRoles.includes(m.role) ||
+                    adminRoles.includes(m.role?.toLowerCase()) ||
+                    adminRoles.includes(m.role?.toUpperCase())
+                )
             );
 
             if (validPm) {
                 canDelete = true;
-            } else {
             }
         }
 
-        // Check Org Super Admin
+        // Check Org Super Admin / Ops Super Admin
         if (!canDelete && ticket.organization_id) {
             const { data: omList } = await adminSupabase
                 .from('organization_memberships')
@@ -757,12 +730,14 @@ export async function DELETE(
 
 
             const validOm = omList?.find(m =>
-                adminRoles.includes(m.role) ||
-                adminRoles.includes(m.role?.toLowerCase()) ||
-                adminRoles.includes(m.role?.toUpperCase()) ||
-                // Owner 2026-11-03: the org-level Tech team deletes like the Super Admin console (own organisation only;
-                // a property-level 'tech' membership is not enough)
-                ((m.role || '').toLowerCase().trim() === 'tech' && m.is_active !== false)
+                m.is_active !== false && (
+                    adminRoles.includes(m.role) ||
+                    adminRoles.includes(m.role?.toLowerCase()) ||
+                    adminRoles.includes(m.role?.toUpperCase()) ||
+                    // Owner 2026-11-03: the org-level Tech team deletes like the Super Admin console (own organisation only;
+                    // a property-level 'tech' membership is not enough)
+                    (m.role || '').toLowerCase().trim() === 'tech'
+                )
             );
 
             if (validOm) {
