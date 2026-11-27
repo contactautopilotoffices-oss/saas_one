@@ -186,6 +186,150 @@ export function wasApprovedBeforeReplacement(record) {
     return currentQuote(record)?.previous_decision?.status === 'approved';
 }
 
+/**
+ * @typedef {{ is_edited: boolean, edit_count: number, edited_by_id: string | null, edited_by_name: string, edited_at: string | null, previous_status: string | null }} RequisitionEditInfo
+ */
+
+export const EDITABLE_SITE_STATUSES = ['draft', 'uploaded', 'submitted', 'acknowledged', 'rejected'];
+
+/** True while the requisition can still be edited and re-uploaded by the site team.
+ * @param {any} record
+ * @returns {boolean}
+ */
+export function canSiteEditRequisition(record) {
+    return Boolean(record?.status && EDITABLE_SITE_STATUSES.includes(String(record.status)));
+}
+
+/** Normalized latest edit metadata stored in requisition notes JSON, or null if never edited.
+ * @param {any} record
+ * @returns {RequisitionEditInfo | null}
+ */
+export function siteEditInfo(record) {
+    const info = requisitionNotes(record)?.edit_info;
+    if (!info || typeof info !== 'object') return null;
+    if (!info.edited_at && !info.is_edited) return null;
+    const count = Number(info.edit_count);
+    return {
+        is_edited: true,
+        edit_count: Number.isFinite(count) && count > 0 ? count : 1,
+        edited_by_id: info.edited_by_id || null,
+        edited_by_name: info.edited_by_name || 'Site Team',
+        edited_at: info.edited_at || null,
+        previous_status: info.previous_status || null,
+    };
+}
+
+/** Chronological edit history recorded in requisition notes JSON.
+ * @param {any} record
+ * @returns {any[]}
+ */
+export function siteEditHistory(record) {
+    const history = requisitionNotes(record)?.edit_history;
+    return Array.isArray(history) ? history : [];
+}
+
+/** Human-readable date and time label for requisition edit clarifications.
+ * @param {string | null | undefined} iso
+ * @returns {string}
+ */
+export function formatEditDateTime(iso) {
+    if (!iso) return '';
+    const date = new Date(iso);
+    if (Number.isNaN(date.getTime())) return '';
+    return date.toLocaleString('en-IN', {
+        day: '2-digit',
+        month: 'short',
+        year: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit',
+        hour12: true,
+    });
+}
+
+/**
+ * Merges newly prepared requisition notes with prior notes while recording
+ * who edited the requisition, when, and keeping audit history intact.
+ * @param {any} existing
+ * @param {{ baseNotes?: Record<string, any> | string, editorId?: string | null, editorName?: string, editedAt?: string, nextStatus?: string, summary?: string }} [options]
+ * @returns {Record<string, any>}
+ */
+export function prepareRequisitionEdit(existing, options = {}) {
+    const {
+        baseNotes = {},
+        editorId = null,
+        editorName = 'Site Team',
+        editedAt = new Date().toISOString(),
+        nextStatus = 'submitted',
+        summary = '',
+    } = options;
+    const prevNotes = requisitionNotes(existing);
+    /** @type {Record<string, any>} */
+    let parsedBase = {};
+    if (typeof baseNotes === 'string') {
+        try {
+            parsedBase = JSON.parse(baseNotes);
+        } catch {
+            parsedBase = {};
+        }
+    } else if (baseNotes && typeof baseNotes === 'object') {
+        parsedBase = { ...baseNotes };
+    }
+
+    const prevInfo = siteEditInfo(existing);
+    const prevEditHistory = siteEditHistory(existing);
+    const prevStatusHistory = Array.isArray(prevNotes.status_history) ? prevNotes.status_history : [];
+    const previousStatus = String(existing?.status || 'submitted');
+    const editCount = (prevInfo?.edit_count || 0) + 1;
+    const cleanName = (editorName && String(editorName).trim()) || 'Site Team';
+    const cleanSummary = summary && String(summary).trim() ? String(summary).trim() : '';
+
+    const editEntry = {
+        edit_number: editCount,
+        edited_by_id: editorId || null,
+        edited_by_name: cleanName,
+        edited_at: editedAt,
+        previous_status: previousStatus,
+        next_status: nextStatus,
+        ...(cleanSummary ? { summary: cleanSummary } : {}),
+    };
+
+    const editInfo = {
+        is_edited: true,
+        edit_count: editCount,
+        edited_by_id: editorId || null,
+        edited_by_name: cleanName,
+        edited_at: editedAt,
+        previous_status: previousStatus,
+    };
+
+    /** @type {Record<string, any>} */
+    const merged = {
+        ...parsedBase,
+        edit_info: editInfo,
+        edit_history: [...prevEditHistory, editEntry],
+        status_history: [
+            ...prevStatusHistory,
+            {
+                status: nextStatus,
+                action: 'edited',
+                by_id: editorId || null,
+                by_name: cleanName,
+                remarks: cleanSummary || `Requisition edited & re-uploaded (Edit #${editCount})`,
+                timestamp: editedAt,
+            },
+        ],
+    };
+
+    // Keep prior quotes/approvals unless the requisition was previously rejected and is now re-submitted.
+    if (previousStatus !== 'rejected') {
+        if (prevNotes.vendor_quotation) merged.vendor_quotation = prevNotes.vendor_quotation;
+        if (prevNotes.approver_info) merged.approver_info = prevNotes.approver_info;
+    }
+    if (prevNotes.po_info) merged.po_info = prevNotes.po_info;
+
+    return merged;
+}
+
 /** One WhatsApp summary to the approver for a replaced comparison file. */
 export function reapprovalWhatsAppOptions(records, context) {
     const options = batchWhatsAppOptions(records, context);

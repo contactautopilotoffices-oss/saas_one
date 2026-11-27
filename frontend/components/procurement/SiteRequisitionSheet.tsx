@@ -4,12 +4,13 @@ import {
     FileSpreadsheet, Download, Save, Send, Plus, Trash2,
     CheckCircle2, AlertCircle, RefreshCw, Layers, Calendar,
     Building2, User, Phone, Sparkles, Loader2, ArrowRight,
-    MapPin, IndianRupee, ShieldAlert, Coffee, X, Search
+    MapPin, IndianRupee, ShieldAlert, Coffee, X, Search, Pencil
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useRequisitionDraft } from '@/frontend/hooks/useRequisitionDraft';
 import { draftPeriodKey } from '@/frontend/lib/requisitionDrafts';
 import type { DraftPayload } from '@/frontend/lib/requisitionDrafts';
+import { siteEditInfo, formatEditDateTime } from '@/backend/lib/procurement/requisition-approval.mjs';
 import ModalPortal from '../ui/ModalPortal';
 
 export interface RequisitionRow {
@@ -31,8 +32,61 @@ interface SiteRequisitionSheetProps {
     organizationId: string;
     properties: Array<{ id: string; name: string; location?: string }>;
     initialPropertyId?: string;
+    editingRequisition?: any;
     onSubmitted?: (newReq: any) => void;
     onCancel?: () => void;
+}
+
+function mergeRequisitionItems(catalogRows: RequisitionRow[], savedItems: any[]): RequisitionRow[] {
+    if (!Array.isArray(savedItems) || savedItems.length === 0) return catalogRows;
+    if (!catalogRows || catalogRows.length === 0) return savedItems as RequisitionRow[];
+
+    const savedById = new Map<string, any>();
+    const savedByName = new Map<string, any>();
+    for (const row of savedItems) {
+        if (row?.id) savedById.set(row.id, row);
+        if (row?.name) savedByName.set(String(row.name).trim().toLowerCase(), row);
+    }
+
+    const matchedKeys = new Set<any>();
+    const mergedCatalog = catalogRows.map(catalogItem => {
+        const saved = savedById.get(catalogItem.id) || savedByName.get((catalogItem.name || '').trim().toLowerCase());
+        if (saved) {
+            matchedKeys.add(saved);
+            return {
+                ...catalogItem,
+                requested_qty: Number(saved.requested_qty ?? 0),
+                available_stock_qty: Number(saved.available_stock_qty ?? 0),
+                remarks: saved.remarks ?? '',
+                brand: saved.brand || catalogItem.brand,
+                details: saved.details || catalogItem.details,
+                unit: saved.unit || catalogItem.unit,
+                unit_price: catalogItem.unit_price,
+            };
+        }
+        return catalogItem;
+    });
+
+    const extraRows = savedItems
+        .filter(row => {
+            if (!row || matchedKeys.has(row) || !(row.name && String(row.name).trim())) return false;
+            return Boolean(row.id?.startsWith?.('row-') || (row.requested_qty || 0) > 0 || (row.available_stock_qty || 0) > 0);
+        })
+        .map((row, idx) => ({
+            id: row.id || `row-saved-${idx}`,
+            category: row.category || 'HK',
+            name: row.name,
+            brand: row.brand || 'NA',
+            details: row.details || '',
+            requested_qty: Number(row.requested_qty ?? 0),
+            available_stock_qty: Number(row.available_stock_qty ?? 0),
+            unit: row.unit || 'Piece',
+            unit_price: Number(row.unit_price ?? 0),
+            is_site_specific: row.is_site_specific,
+            remarks: row.remarks || '',
+        }));
+
+    return [...mergedCatalog, ...extraRows];
 }
 
 const MONTH_NAMES = [
@@ -60,18 +114,27 @@ export default function SiteRequisitionSheet({
     organizationId,
     properties,
     initialPropertyId,
+    editingRequisition,
     onSubmitted,
     onCancel
 }: SiteRequisitionSheetProps) {
+    const isEditMode = Boolean(editingRequisition?.id);
+    const existingEditInfo = editingRequisition ? siteEditInfo(editingRequisition) : null;
     const supabase = useMemo(() => createClient(), []);
     const [selectedPropertyId, setSelectedPropertyId] = useState<string>(
-        initialPropertyId || (properties[0]?.id ?? '')
+        editingRequisition?.property_id || initialPropertyId || (properties[0]?.id ?? '')
     );
-    const [fetchedPropertyName, setFetchedPropertyName] = useState<string>('');
-    const [floorTag, setFloorTag] = useState<string>('All Floors');
-    const [requisitionMonth, setRequisitionMonth] = useState<number>(new Date().getMonth() + 1);
-    const [requisitionYear, setRequisitionYear] = useState<number>(new Date().getFullYear());
-    const [siteNotes, setSiteNotes] = useState<string>('');
+    const [fetchedPropertyName, setFetchedPropertyName] = useState<string>(
+        editingRequisition?.property?.name || ''
+    );
+    const [floorTag, setFloorTag] = useState<string>(editingRequisition?.floor_tag || 'All Floors');
+    const [requisitionMonth, setRequisitionMonth] = useState<number>(
+        Number(editingRequisition?.requisition_month) || (new Date().getMonth() + 1)
+    );
+    const [requisitionYear, setRequisitionYear] = useState<number>(
+        Number(editingRequisition?.requisition_year) || new Date().getFullYear()
+    );
+    const [siteNotes, setSiteNotes] = useState<string>(editingRequisition?.site_notes || '');
     const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
     const isSubmittingRef = useRef<boolean>(false);
     const [isDownloading, setIsDownloading] = useState<boolean>(false);
@@ -130,46 +193,12 @@ export default function SiteRequisitionSheet({
             if (!current || current.length === 0) {
                 return draft.items;
             }
-
-            const draftMap = new Map<string, RequisitionRow>();
-            const draftNameMap = new Map<string, RequisitionRow>();
-            for (const row of draft.items) {
-                if (row.id) draftMap.set(row.id, row);
-                if (row.name) draftNameMap.set(row.name.trim().toLowerCase(), row);
-            }
-
-            // 1. Walk every item in the live active catalog: preserve user's saved draft edits
-            // (quantities, available stock, remarks), while maintaining standard catalog rates & sorting
-            const mergedCatalog = current.map(catalogItem => {
-                const saved = draftMap.get(catalogItem.id) || draftNameMap.get((catalogItem.name || '').trim().toLowerCase());
-                if (saved) {
-                    return {
-                        ...catalogItem,
-                        requested_qty: saved.requested_qty ?? 0,
-                        available_stock_qty: saved.available_stock_qty ?? 0,
-                        remarks: saved.remarks ?? '',
-                        brand: saved.brand || catalogItem.brand,
-                        details: saved.details || catalogItem.details,
-                        unit: saved.unit || catalogItem.unit,
-                        unit_price: catalogItem.unit_price
-                    };
-                }
-                // Newly added catalog item not present when draft was originally saved:
-                // keep it in the sheet with default 0 quantities so site team sees it automatically
-                return catalogItem;
-            });
-
-            // 2. Preserve any custom rows manually added by the user via "Add Item" button (with non-empty name)
-            const customRows = draft.items.filter(row =>
-                row.id?.startsWith('row-') && (row.name || '').trim().length > 0 && !current.some(c => c.id === row.id)
-            );
-
-            return [...mergedCatalog, ...customRows];
+            return mergeRequisitionItems(current, draft.items);
         });
     }, []);
     const draftPayload = { floorTag, month: requisitionMonth, year: requisitionYear, siteNotes, items };
     const draft = useRequisitionDraft({ userId: user?.id || '', orgId: draftOrgId, propertyId: selectedPropertyId,
-        ready: !isLoadingItems && catalogScope === `${user?.id}:${draftOrgId}:${selectedPropertyId}`,
+        ready: !isEditMode && !isLoadingItems && catalogScope === `${user?.id}:${draftOrgId}:${selectedPropertyId}`,
         payload: draftPayload, onRestore: restoreDraft });
 
     // Automatically sync selectedPropertyId when initialPropertyId or properties prop updates
@@ -291,11 +320,19 @@ export default function SiteRequisitionSheet({
                 }));
 
                 if (cancelled) return;
-                setItems(populatedRows);
-                setSiteNotes('');
-                setFloorTag('All Floors');
-                setRequisitionMonth(new Date().getMonth() + 1);
-                setRequisitionYear(new Date().getFullYear());
+                if (isEditMode && editingRequisition) {
+                    setItems(mergeRequisitionItems(populatedRows, editingRequisition.items || []));
+                    setSiteNotes(editingRequisition.site_notes || '');
+                    setFloorTag(editingRequisition.floor_tag || 'All Floors');
+                    setRequisitionMonth(Number(editingRequisition.requisition_month) || (new Date().getMonth() + 1));
+                    setRequisitionYear(Number(editingRequisition.requisition_year) || new Date().getFullYear());
+                } else {
+                    setItems(populatedRows);
+                    setSiteNotes('');
+                    setFloorTag('All Floors');
+                    setRequisitionMonth(new Date().getMonth() + 1);
+                    setRequisitionYear(new Date().getFullYear());
+                }
                 setCatalogScope(`${user?.id}:${org}:${selectedPropertyId}`);
             } catch (err) {
                 console.error('Failed to load the standard item list:', err);
@@ -306,7 +343,7 @@ export default function SiteRequisitionSheet({
         };
         fetchSiteData();
         return () => { cancelled = true; };
-    }, [user?.id, organizationId, resolvedOrgId, selectedPropertyId, catalogRetry]);
+    }, [user?.id, organizationId, resolvedOrgId, selectedPropertyId, catalogRetry, isEditMode, editingRequisition?.id]);
 
     const grandTotalEstimated = useMemo(() => {
         return items.reduce((acc, row) => acc + ((Number(row.requested_qty) || 0) * (Number(row.unit_price) || 0)), 0);
@@ -492,29 +529,50 @@ export default function SiteRequisitionSheet({
         setShowOverBudgetModal(false);
         try {
             const org = organizationId || resolvedOrgId;
-            const res = await fetch('/api/procurement/requisitions', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    organization_id: org,
-                    property_id: selectedPropertyId,
-                    floor_tag: floorTag,
-                    requisition_month: requisitionMonth,
-                    requisition_year: requisitionYear,
-                    user_id: user?.id,
-                    site_notes: siteNotes,
-                    items: submitItems
+            const res = isEditMode && editingRequisition?.id
+                ? await fetch(`/api/procurement/requisitions/${editingRequisition.id}`, {
+                    method: 'PATCH',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        action: 'edit_requisition',
+                        floor_tag: floorTag,
+                        site_notes: siteNotes,
+                        items: submitItems
+                    })
                 })
-            });
+                : await fetch('/api/procurement/requisitions', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        organization_id: org,
+                        property_id: selectedPropertyId,
+                        floor_tag: floorTag,
+                        requisition_month: requisitionMonth,
+                        requisition_year: requisitionYear,
+                        user_id: user?.id,
+                        site_notes: siteNotes,
+                        items: submitItems
+                    })
+                });
 
             const data = await res.json();
             if (!res.ok || data.error) {
                 throw new Error(data.error || 'Failed to submit requisition');
             }
 
-            await draft.clearAfterSubmit(submittedDraft);
+            if (!isEditMode) {
+                await draft.clearAfterSubmit(submittedDraft);
+            }
 
-            if (isOverBudget) {
+            if (isEditMode) {
+                const updatedEditInfo = data.requisition?.edit_info;
+                const editorLabel = updatedEditInfo?.edited_by_name ? ` Marked as Edited by ${updatedEditInfo.edited_by_name}.` : ' Marked as Edited.';
+                if (isOverBudget) {
+                    alert(`⚠️ Requisition for ${selectedProperty?.name || 'Property'} (${floorTag}) updated & re-uploaded with Over-Budget Flag (+₹${excessBudgetAmount.toLocaleString('en-IN')}).${editorLabel}`);
+                } else {
+                    alert(`✅ Requisition for ${selectedProperty?.name || 'Property'} (${floorTag}) edited & re-uploaded successfully!${editorLabel}`);
+                }
+            } else if (isOverBudget) {
                 alert(`⚠️ Requisition for ${selectedProperty?.name || 'Property'} (${floorTag}) submitted with Over-Budget Flag (+₹${excessBudgetAmount.toLocaleString('en-IN')}). Procurement & Approvers have been notified.`);
             } else {
                 alert(`✅ Requisition for ${selectedProperty?.name || 'Property'} (${floorTag}) submitted successfully! Procurement team has been notified.`);
@@ -542,20 +600,36 @@ export default function SiteRequisitionSheet({
                             <FileSpreadsheet className="w-6 h-6" />
                         </div>
                         <div>
-                            <h1 className="text-lg font-black text-slate-800">Monthly Material Requisition Sheet</h1>
-                            <p className="text-xs text-slate-500 font-medium">Standard Dual-Table Site Requisition vs. Current Stock (Site-Specific Pricing)</p>
+                            <div className="flex flex-wrap items-center gap-2">
+                                <h1 className="text-lg font-black text-slate-800">
+                                    {isEditMode ? 'Edit Monthly Material Requisition' : 'Monthly Material Requisition Sheet'}
+                                </h1>
+                                {isEditMode && (
+                                    <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-black uppercase tracking-wider bg-indigo-100 text-indigo-800 border border-indigo-200">
+                                        <Pencil className="w-3 h-3" />
+                                        Edit Mode
+                                    </span>
+                                )}
+                            </div>
+                            <p className="text-xs text-slate-500 font-medium">
+                                {isEditMode
+                                    ? 'Update quantities, stock, floor or notes and re-upload — this requisition will be marked Edited with your name and date/time.'
+                                    : 'Standard Dual-Table Site Requisition vs. Current Stock (Site-Specific Pricing)'}
+                            </p>
                         </div>
                     </div>
 
                     <div className="flex items-center gap-2">
-                        <button
-                            onClick={() => { void draft.save(); }}
-                            disabled={isSubmitting || isLoadingItems || draft.isLoadingDraft || draft.isSaving}
-                            className="h-9 px-3.5 inline-flex items-center gap-1.5 rounded-xl text-xs font-bold text-emerald-700 bg-emerald-50 hover:bg-emerald-100 disabled:opacity-50"
-                        >
-                            {draft.isSaving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Save className="w-3.5 h-3.5" />}
-                            {draft.isSaving ? 'Saving…' : draft.drafts.length ? 'Save Changes' : 'Save Draft'}
-                        </button>
+                        {!isEditMode && (
+                            <button
+                                onClick={() => { void draft.save(); }}
+                                disabled={isSubmitting || isLoadingItems || draft.isLoadingDraft || draft.isSaving}
+                                className="h-9 px-3.5 inline-flex items-center gap-1.5 rounded-xl text-xs font-bold text-emerald-700 bg-emerald-50 hover:bg-emerald-100 disabled:opacity-50"
+                            >
+                                {draft.isSaving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Save className="w-3.5 h-3.5" />}
+                                {draft.isSaving ? 'Saving…' : draft.drafts.length ? 'Save Changes' : 'Save Draft'}
+                            </button>
+                        )}
                         {onCancel && (
                             <button
                                 onClick={onCancel}
@@ -579,7 +653,7 @@ export default function SiteRequisitionSheet({
                         </button>
                         <button
                             onClick={() => handleSubmitRequisition(false)}
-                            disabled={isSubmitting || isDownloading || isLoadingItems || draft.isLoadingDraft}
+                            disabled={isSubmitting || isDownloading || isLoadingItems || (!isEditMode && draft.isLoadingDraft)}
                             className="h-9 px-4.5 inline-flex items-center gap-1.5 rounded-xl text-xs font-black text-white bg-emerald-600 hover:bg-emerald-700 shadow-md shadow-emerald-600/20 transition-all disabled:opacity-50 cursor-pointer"
                         >
                             {isSubmitting ? (
@@ -587,17 +661,37 @@ export default function SiteRequisitionSheet({
                             ) : (
                                 <Send className="w-3.5 h-3.5" />
                             )}
-                            <span>{isSubmitting ? 'Submitting...' : 'Submit to Procurement'}</span>
+                            <span>
+                                {isSubmitting
+                                    ? (isEditMode ? 'Updating...' : 'Submitting...')
+                                    : (isEditMode ? 'Save & Re-upload' : 'Submit to Procurement')}
+                            </span>
                         </button>
                     </div>
                 </div>
             </div>
 
-            {(draft.isLoadingDraft || isLoadingItems) && <div role={catalogError ? 'alert' : 'status'} className="max-w-7xl mx-auto px-4 py-6 text-sm text-slate-700">
+            {((!isEditMode && draft.isLoadingDraft) || isLoadingItems) && <div role={catalogError ? 'alert' : 'status'} className="max-w-7xl mx-auto px-4 py-6 text-sm text-slate-700">
                 {catalogError || 'Loading items and saved draft…'}
                 {catalogError && <button type="button" onClick={() => setCatalogRetry(value => value + 1)} className="ml-3 font-bold underline">Retry</button>}
             </div>}
-            <div className="max-w-7xl mx-auto px-4 py-6 space-y-6" hidden={draft.isLoadingDraft || isLoadingItems}>
+            <div className="max-w-7xl mx-auto px-4 py-6 space-y-6" hidden={(!isEditMode && draft.isLoadingDraft) || isLoadingItems}>
+                {isEditMode ? (
+                    <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-indigo-200 bg-indigo-50 px-4 py-3 text-xs text-indigo-950">
+                        <div className="flex items-center gap-2 font-semibold">
+                            <Pencil className="w-4 h-4 text-indigo-600 shrink-0" />
+                            <span>
+                                Editing uploaded requisition for <b>{MONTH_NAMES[requisitionMonth - 1]} {requisitionYear}</b>. Saving regenerates the Excel sheet and marks this requisition as <b>Edited</b> with your name and date/time.
+                            </span>
+                        </div>
+                        {existingEditInfo && (
+                            <span className="text-[11px] font-bold text-indigo-800 bg-white/80 px-2.5 py-1 rounded-lg border border-indigo-200">
+                                Previously edited ({existingEditInfo.edit_count}x) by {existingEditInfo.edited_by_name}
+                                {existingEditInfo.edited_at ? ` · ${formatEditDateTime(existingEditInfo.edited_at)}` : ''}
+                            </span>
+                        )}
+                    </div>
+                ) : (
                 <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm">
                     <p role="status" className="text-emerald-900">{draft.status || 'Loading draft…'} Your draft is private and is not sent to procurement until you submit.</p>
                     {draft.status.includes('another session') && <button type="button" className="font-bold underline"
@@ -612,10 +706,11 @@ export default function SiteRequisitionSheet({
                         </option>)}
                     </select>}
                 </div>
+                )}
                 <div className="bg-white rounded-2xl border border-slate-200 p-5 shadow-xs grid grid-cols-1 sm:grid-cols-2 md:grid-cols-5 gap-4">
                     <div>
                         <label className="text-xs font-bold text-slate-500 uppercase tracking-wider block mb-1">Center / Property</label>
-                        {properties.length <= 1 ? (
+                        {properties.length <= 1 || isEditMode ? (
                             <div className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-sm font-bold text-slate-800 flex items-center gap-2">
                                 <Building2 className="w-4 h-4 text-emerald-600 shrink-0" />
                                 <span className="truncate">{fetchedPropertyName || selectedProperty?.name || properties[0]?.name || 'Loading Property...'}</span>
@@ -653,8 +748,9 @@ export default function SiteRequisitionSheet({
                         <div className="flex items-center gap-2">
                             <select
                                 value={requisitionMonth}
+                                disabled={isEditMode}
                                 onChange={e => setRequisitionMonth(parseInt(e.target.value))}
-                                className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-sm font-bold text-slate-800 focus:outline-hidden focus:ring-2 focus:ring-emerald-500"
+                                className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-sm font-bold text-slate-800 focus:outline-hidden focus:ring-2 focus:ring-emerald-500 disabled:opacity-70"
                             >
                                 {MONTH_NAMES.map((m, idx) => (
                                     <option key={idx + 1} value={idx + 1}>{m}</option>
@@ -1181,9 +1277,11 @@ export default function SiteRequisitionSheet({
                             <Loader2 className="w-6 h-6 animate-spin" />
                         </div>
                         <div>
-                            <h3 className="text-base font-bold text-slate-800">Submitting Requisition</h3>
+                            <h3 className="text-base font-bold text-slate-800">{isEditMode ? 'Updating Requisition' : 'Submitting Requisition'}</h3>
                             <p className="text-xs text-slate-500 mt-1">
-                                Verifying prices, generating Excel workbook, and submitting to procurement. Please wait...
+                                {isEditMode
+                                    ? 'Verifying prices, regenerating Excel workbook, and saving your edit...'
+                                    : 'Verifying prices, generating Excel workbook, and submitting to procurement. Please wait...'}
                             </p>
                         </div>
                         <div className="pt-2">

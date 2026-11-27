@@ -5,11 +5,19 @@ import {
     X, CheckCircle2, XCircle, FileSpreadsheet, Download,
     Building2, Calendar, User, DollarSign, FileText, AlertCircle,
     Loader2, ShieldCheck, MessageSquare, Search, Filter,
-    Maximize2, Minimize2, ArrowLeft
+    Maximize2, Minimize2, ArrowLeft, Pencil, History
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import ModalPortal from '../ui/ModalPortal';
-import { siteVendorQuotation, siteEstimatedAmount, fileRevision } from '@/backend/lib/procurement/requisition-approval.mjs';
+import {
+    siteVendorQuotation,
+    siteEstimatedAmount,
+    fileRevision,
+    siteEditInfo,
+    siteEditHistory,
+    canSiteEditRequisition,
+    formatEditDateTime,
+} from '@/backend/lib/procurement/requisition-approval.mjs';
 import { maskStorageUrl } from '@/frontend/utils/storageUrl';
 
 interface ApproverRequisitionModalProps {
@@ -20,6 +28,8 @@ interface ApproverRequisitionModalProps {
     allRequisitions?: any[];
     currentUser: any;
     onStatusUpdated: () => void;
+    canEdit?: boolean;
+    onEdit?: (requisition: any) => void;
 }
 
 const MONTH_NAMES = [
@@ -33,7 +43,9 @@ export default function ApproverRequisitionModal({
     onClose,
     requisition,
     currentUser,
-    onStatusUpdated
+    onStatusUpdated,
+    canEdit = false,
+    onEdit,
 }: ApproverRequisitionModalProps) {
     const [remarks, setRemarks] = useState<string>('');
     const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
@@ -44,6 +56,10 @@ export default function ApproverRequisitionModal({
 
     if (!requisition) return null;
     if (!isInline && !isOpen) return null;
+
+    const editInfo = siteEditInfo(requisition);
+    const editHistory = siteEditHistory(requisition);
+    const canEditThisReq = Boolean(canEdit && onEdit && canSiteEditRequisition(requisition));
 
     const monthName = MONTH_NAMES[(requisition.requisition_month || 1) - 1] || 'Month';
     const items = requisition.items || [];
@@ -189,22 +205,30 @@ export default function ApproverRequisitionModal({
                         <div className="bg-slate-50 dark:bg-slate-800/60 p-4 rounded-2xl border border-slate-200/80 dark:border-slate-700 flex flex-col justify-between">
                             <div>
                                 <span className="text-[11px] font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider block">Requisition Status</span>
-                                <span className={`inline-flex items-center gap-1.5 h-6 px-2.5 rounded-lg text-[11px] font-black uppercase tracking-wider whitespace-nowrap mt-1 ${
-                                    requisition.status === 'approved' ? 'bg-emerald-50 text-emerald-700 border border-emerald-200/80 dark:bg-emerald-950/40 dark:text-emerald-300 dark:border-emerald-800/80' :
-                                    requisition.status === 'rejected' ? 'bg-rose-50 text-rose-700 border border-rose-200/80 dark:bg-rose-950/40 dark:text-rose-300 dark:border-rose-800/80' :
-                                    requisition.status === 'ordered' ? 'bg-indigo-50 text-indigo-700 border border-indigo-200/80 dark:bg-indigo-950/40 dark:text-indigo-300 dark:border-indigo-800/80' :
-                                    requisition.status === 'pending_approval' ? 'bg-sky-50 text-sky-700 border border-sky-200/80 dark:bg-sky-950/40 dark:text-sky-300 dark:border-sky-800/80' :
-                                    'bg-amber-50 text-amber-700 border border-amber-200/80 dark:bg-amber-950/40 dark:text-amber-300 dark:border-amber-800/80'
-                                }`}>
-                                    <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${
-                                        requisition.status === 'approved' ? 'bg-emerald-500' :
-                                        requisition.status === 'rejected' ? 'bg-rose-500' :
-                                        requisition.status === 'ordered' ? 'bg-indigo-500' :
-                                        requisition.status === 'pending_approval' ? 'bg-sky-500' :
-                                        'bg-amber-500'
-                                    }`} />
-                                    <span>{requisition.status === 'ordered' ? 'PO Issued' : requisition.status === 'pending_approval' ? 'Pending Approval' : requisition.status?.replace('_', ' ')}</span>
-                                </span>
+                                <div className="flex flex-wrap items-center gap-1.5 mt-1">
+                                    <span className={`inline-flex items-center gap-1.5 h-6 px-2.5 rounded-lg text-[11px] font-black uppercase tracking-wider whitespace-nowrap ${
+                                        requisition.status === 'approved' ? 'bg-emerald-50 text-emerald-700 border border-emerald-200/80 dark:bg-emerald-950/40 dark:text-emerald-300 dark:border-emerald-800/80' :
+                                        requisition.status === 'rejected' ? 'bg-rose-50 text-rose-700 border border-rose-200/80 dark:bg-rose-950/40 dark:text-rose-300 dark:border-rose-800/80' :
+                                        requisition.status === 'ordered' ? 'bg-indigo-50 text-indigo-700 border border-indigo-200/80 dark:bg-indigo-950/40 dark:text-indigo-300 dark:border-indigo-800/80' :
+                                        requisition.status === 'pending_approval' ? 'bg-sky-50 text-sky-700 border border-sky-200/80 dark:bg-sky-950/40 dark:text-sky-300 dark:border-sky-800/80' :
+                                        'bg-amber-50 text-amber-700 border border-amber-200/80 dark:bg-amber-950/40 dark:text-amber-300 dark:border-amber-800/80'
+                                    }`}>
+                                        <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${
+                                            requisition.status === 'approved' ? 'bg-emerald-500' :
+                                            requisition.status === 'rejected' ? 'bg-rose-500' :
+                                            requisition.status === 'ordered' ? 'bg-indigo-500' :
+                                            requisition.status === 'pending_approval' ? 'bg-sky-500' :
+                                            'bg-amber-500'
+                                        }`} />
+                                        <span>{requisition.status === 'ordered' ? 'PO Issued' : requisition.status === 'pending_approval' ? 'Pending Approval' : requisition.status?.replace('_', ' ')}</span>
+                                    </span>
+                                    {editInfo && (
+                                        <span className="inline-flex items-center gap-1 h-6 px-2.5 rounded-lg text-[10px] font-black uppercase tracking-wider bg-indigo-50 text-indigo-700 border border-indigo-200 dark:bg-indigo-950/50 dark:text-indigo-300 dark:border-indigo-800 whitespace-nowrap">
+                                            <Pencil className="w-3 h-3 shrink-0" />
+                                            Edited{editInfo.edit_count > 1 ? ` #${editInfo.edit_count}` : ''}
+                                        </span>
+                                    )}
+                                </div>
                             </div>
 
                             <a
@@ -218,6 +242,51 @@ export default function ApproverRequisitionModal({
                             </a>
                         </div>
                     </div>
+
+                    {/* Edited Clarification Banner */}
+                    {editInfo && (
+                        <div className="bg-indigo-50/90 dark:bg-indigo-950/40 border border-indigo-200 dark:border-indigo-800/70 rounded-2xl p-4 flex flex-col gap-2 shadow-2xs">
+                            <div className="flex flex-wrap items-center justify-between gap-2">
+                                <div className="flex items-center gap-2">
+                                    <div className="w-8 h-8 rounded-xl bg-indigo-500/15 border border-indigo-500/25 text-indigo-700 dark:text-indigo-300 flex items-center justify-center shrink-0">
+                                        <Pencil className="w-4 h-4" />
+                                    </div>
+                                    <div>
+                                        <div className="flex items-center gap-2">
+                                            <span className="text-xs font-black uppercase tracking-wider text-indigo-900 dark:text-indigo-200">
+                                                Requisition Edited & Re-uploaded
+                                            </span>
+                                            <span className="px-2 py-0.5 rounded-md text-[10px] font-black uppercase bg-indigo-200/70 dark:bg-indigo-900/60 text-indigo-900 dark:text-indigo-200 border border-indigo-300/70 dark:border-indigo-700">
+                                                Edit #{editInfo.edit_count}
+                                            </span>
+                                        </div>
+                                        <p className="text-xs text-slate-700 dark:text-slate-300 mt-0.5">
+                                            Edited by <strong>{editInfo.edited_by_name}</strong>
+                                            {editInfo.edited_at ? <> on <strong className="tabular-nums">{formatEditDateTime(editInfo.edited_at)}</strong></> : null}
+                                        </p>
+                                    </div>
+                                </div>
+                            </div>
+                            {editHistory.length > 1 && (
+                                <div className="pt-2 border-t border-indigo-200/70 dark:border-indigo-800/50 space-y-1">
+                                    <div className="text-[10px] font-bold uppercase tracking-wider text-indigo-800 dark:text-indigo-300 flex items-center gap-1">
+                                        <History className="w-3 h-3" />
+                                        Edit History ({editHistory.length})
+                                    </div>
+                                    <div className="flex flex-wrap gap-2">
+                                        {editHistory.map((entry: any, idx: number) => (
+                                            <span
+                                                key={`${entry.edit_number || idx}-${entry.edited_at || idx}`}
+                                                className="text-[11px] bg-white/80 dark:bg-slate-900/70 text-slate-700 dark:text-slate-300 px-2.5 py-1 rounded-lg border border-indigo-200/80 dark:border-indigo-800/60 tabular-nums"
+                                            >
+                                                #{entry.edit_number || idx + 1}: <b>{entry.edited_by_name || 'Site Team'}</b> · {formatEditDateTime(entry.edited_at)}
+                                            </span>
+                                        ))}
+                                    </div>
+                                </div>
+                            )}
+                        </div>
+                    )}
 
                     {/* Creator / Site Requisition Notes Box */}
                     {creatorNotes && (
@@ -641,6 +710,16 @@ export default function ApproverRequisitionModal({
                     </div>
 
                     <div className="flex items-center gap-2">
+                        {canEditThisReq && (
+                            <button
+                                type="button"
+                                onClick={() => onEdit?.(requisition)}
+                                className="inline-flex items-center gap-1.5 h-9 px-3.5 rounded-xl text-xs font-bold text-indigo-700 bg-indigo-50 dark:text-indigo-300 dark:bg-indigo-950/60 border border-indigo-200 dark:border-indigo-800 hover:bg-indigo-100 dark:hover:bg-indigo-900/60 transition-colors whitespace-nowrap shadow-2xs cursor-pointer"
+                            >
+                                <Pencil className="w-3.5 h-3.5" />
+                                <span>Edit Requisition</span>
+                            </button>
+                        )}
                         <a
                             href={`/api/procurement/requisitions/${requisition.id}/export`}
                             target="_blank"
@@ -761,6 +840,16 @@ export default function ApproverRequisitionModal({
                         </div>
 
                         <div className="flex items-center gap-2">
+                            {canEditThisReq && (
+                                <button
+                                    type="button"
+                                    onClick={() => onEdit?.(requisition)}
+                                    className="hidden sm:inline-flex items-center gap-1.5 h-8 px-3 rounded-xl text-xs font-bold text-indigo-200 bg-indigo-950/80 border border-indigo-700 hover:bg-indigo-900 transition-colors whitespace-nowrap cursor-pointer"
+                                >
+                                    <Pencil className="w-3.5 h-3.5" />
+                                    <span>Edit</span>
+                                </button>
+                            )}
                             <a
                                 href={`/api/procurement/requisitions/${requisition.id}/export`}
                                 target="_blank"

@@ -1,11 +1,18 @@
-import { siteVendorQuotation } from '@/backend/lib/procurement/requisition-approval.mjs';
+import {
+    siteVendorQuotation,
+    siteEditInfo,
+    siteEditHistory,
+    canSiteEditRequisition,
+    prepareRequisitionEdit,
+} from '@/backend/lib/procurement/requisition-approval.mjs';
+import { prepareRequisitionArtifacts } from '@/backend/lib/procurement/requisitionSubmission';
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/frontend/utils/supabase/server';
 import { createAdminClient } from '@/frontend/utils/supabase/admin';
 import { WhatsAppEventProcessor } from '@/backend/services/WhatsAppEventProcessor';
 import { EmailService } from '@/backend/services/EmailService';
 import { EmailRecipientResolver } from '@/backend/services/EmailRecipientResolver';
-import { resolveCaller, isCallerError, forbidden, guardOrg, propertyOrgId, canUseProperty } from '@/backend/lib/auth/callerAccess';
+import { resolveCaller, isCallerError, forbidden, guardOrg, propertyOrgId, canUseProperty, belongsToOrg } from '@/backend/lib/auth/callerAccess';
 
 const MONTH_NAMES = [
     'January', 'February', 'March', 'April', 'May', 'June',
@@ -77,7 +84,9 @@ export async function GET(
                 site_notes: parsedData.site_notes || parsedData.creator_notes || (typeof req.notes === 'string' && !req.notes.trim().startsWith('{') ? req.notes : '') || '',
                 vendor_quotation: siteVendorQuotation({ ...req, vendor_quotation: parsedData.vendor_quotation }),
                 approver_info: parsedData.approver_info || null,
-                po_info: parsedData.po_info || null
+                po_info: parsedData.po_info || null,
+                edit_info: siteEditInfo({ notes: parsedData }),
+                edit_history: siteEditHistory({ notes: parsedData }),
             }
         });
     } catch (err: any) {
@@ -114,21 +123,22 @@ export async function PATCH(
         }
 
         const { data: profile, error: profileError } = await adminSupabase.from('users')
-            .select('is_master_admin,deleted_at').eq('id', user.id).maybeSingle();
+            .select('id, full_name, email, is_master_admin, deleted_at').eq('id', user.id).maybeSingle();
         if (profileError) throw profileError;
         if (!profile || profile.deleted_at) return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
-        if (!profile.is_master_admin) {
-            const { data: memberships, error } = await adminSupabase.from('organization_memberships')
-                .select('role').eq('organization_id', existing.organization_id).eq('user_id', user.id).eq('is_active', true);
-            if (error) throw error;
-            const roles = ['procurement', 'purchase_manager', 'purchase_executive', 'org_super_admin', 'ops_super_admin', 'master_admin'];
-            if (!memberships?.some(member => roles.includes(member.role))) {
-                return NextResponse.json({ error: 'Procurement or administrator access is required.' }, { status: 403 });
-            }
+
+        const isMultipart = contentType.includes('multipart/form-data');
+        const isJson = contentType.includes('application/json');
+        if (!isMultipart && !isJson) {
+            return NextResponse.json({ error: 'Unsupported content type.' }, { status: 400 });
         }
-        if (!contentType.includes('multipart/form-data')) {
-            return NextResponse.json({ error: 'Use the individual approval endpoint for decisions, or the quotation/PO form.' }, { status: 400 });
-        }
+
+        const formData = isMultipart ? await request.formData() : null;
+        const jsonBody = isJson ? await request.json() : null;
+        const requestAction = isMultipart
+            ? ((formData!.get('action') as string) || 'submit_for_approval')
+            : (jsonBody?.action || '');
+
         let propertyObj: any = null;
         if (existing.property_id) {
             const { data: prop } = await adminSupabase.from('properties').select('id, name, address, city').eq('id', existing.property_id).maybeSingle();
@@ -152,14 +162,179 @@ export async function PATCH(
             existingNotesObj = { site_notes: typeof existing.notes === 'string' ? existing.notes : '' };
         }
 
+        // Site team / admin requisition edit & re-upload path (JSON sheet or replacement .xlsx FormData)
+        if (requestAction === 'edit_requisition') {
+            const caller = await resolveCaller(request);
+            if (isCallerError(caller)) return caller;
+            const canEditProp = existing.property_id
+                ? canUseProperty(caller, existing.property_id, existing.organization_id)
+                : false;
+            const isCreatorInOrg = existing.uploaded_by === user.id && await belongsToOrg(caller, existing.organization_id);
+            if (!canEditProp && !isCreatorInOrg) {
+                return forbidden('You do not have permission to edit this requisition.');
+            }
+
+            if (!canSiteEditRequisition(existing)) {
+                return NextResponse.json({
+                    error: `Requisition in status '${existing.status}' can no longer be edited. Use Replace Comparison File if already sent for approval.`,
+                }, { status: 409 });
+            }
+
+            const uploadedFile = isMultipart ? (formData!.get('file') as File | null) : null;
+            const rawFloor = isMultipart ? formData!.get('floor_tag') : jsonBody?.floor_tag;
+            const floorTag = (typeof rawFloor === 'string' && rawFloor.trim()) ? rawFloor.trim() : (existing.floor_tag || 'All Floors');
+            const rawSiteNotes = isMultipart
+                ? ((formData!.get('site_notes') as string) ?? (formData!.get('notes') as string) ?? '')
+                : (jsonBody?.site_notes ?? jsonBody?.notes ?? '');
+            const siteNotes = typeof rawSiteNotes === 'string' ? rawSiteNotes : '';
+
+            let rawItems = Array.isArray(existingNotesObj.items) ? existingNotesObj.items : [];
+            if (isJson) {
+                if (!Array.isArray(jsonBody?.items)) {
+                    return NextResponse.json({ error: 'Items list is required when editing a requisition.' }, { status: 400 });
+                }
+                rawItems = jsonBody.items;
+            } else if (formData?.get('items')) {
+                try {
+                    const parsedFormItems = JSON.parse(String(formData.get('items')));
+                    if (Array.isArray(parsedFormItems)) rawItems = parsedFormItems;
+                } catch {
+                    // keep existing items list when multipart only attaches an updated spreadsheet
+                }
+            }
+
+            const editSummary = isMultipart
+                ? ((formData!.get('edit_summary') as string) || '')
+                : (typeof jsonBody?.edit_summary === 'string' ? jsonBody.edit_summary : '');
+
+            const artifacts = await prepareRequisitionArtifacts(adminSupabase, {
+                organizationId: existing.organization_id,
+                propertyId: existing.property_id,
+                requisitionMonth: existing.requisition_month,
+                requisitionYear: existing.requisition_year,
+                floorTag,
+                siteNotes,
+                userId: existing.uploaded_by || user.id,
+                items: rawItems,
+                file: uploadedFile,
+            });
+
+            const nowIso = new Date().toISOString();
+            const editorName = profile.full_name || profile.email || caller.email || user.email || 'Site Team';
+            const updatedNotesObj = prepareRequisitionEdit(existing, {
+                baseNotes: artifacts.baseNotesObj,
+                editorId: user.id,
+                editorName,
+                editedAt: nowIso,
+                nextStatus: 'submitted',
+                summary: editSummary,
+            });
+
+            let editQuery = adminSupabase
+                .from('property_monthly_requisitions')
+                .update({
+                    floor_tag: floorTag,
+                    file_url: artifacts.publicUrl,
+                    file_name: artifacts.uploadedFileName,
+                    file_size_bytes: artifacts.fileSizeBytes,
+                    notes: JSON.stringify(updatedNotesObj),
+                    status: 'submitted',
+                    updated_at: nowIso,
+                    is_over_budget: artifacts.isOverBudget,
+                    budget_limit: artifacts.allocatedBudgetLimit,
+                    over_budget_amount: artifacts.overBudgetAmount,
+                })
+                .eq('id', id)
+                .eq('organization_id', existing.organization_id)
+                .eq('status', existing.status);
+
+            editQuery = existing.updated_at
+                ? editQuery.eq('updated_at', existing.updated_at)
+                : editQuery.is('updated_at', null);
+
+            const { data: updatedEditRecord, error: editUpdateError } = await editQuery
+                .select('*')
+                .maybeSingle();
+
+            if (editUpdateError || !updatedEditRecord) {
+                return NextResponse.json({
+                    error: 'Requisition changed or could not be updated. Refresh and retry.',
+                }, { status: 409 });
+            }
+
+            const editInfo = siteEditInfo({ notes: updatedNotesObj });
+            const editHistory = siteEditHistory({ notes: updatedNotesObj });
+
+            try {
+                await adminSupabase.from('event_outbox').insert({
+                    event_type: 'REQUISITION_EDITED',
+                    entity_id: id,
+                    payload: {
+                        requisition_id: id,
+                        property_id: existing.property_id,
+                        organization_id: existing.organization_id,
+                        floor_tag: floorTag,
+                        requisition_month: existing.requisition_month,
+                        requisition_year: existing.requisition_year,
+                        file_name: artifacts.uploadedFileName,
+                        file_url: artifacts.publicUrl,
+                        total_amount: artifacts.totalEstimatedAmount,
+                        total_estimated_amount: artifacts.totalEstimatedAmount,
+                        edited_by_id: user.id,
+                        edited_by_name: editorName,
+                        edited_at: nowIso,
+                        edit_info: editInfo,
+                        status: 'submitted',
+                    },
+                });
+            } catch (outboxErr) {
+                console.warn('[Requisition Edit Outbox Warning]:', outboxErr);
+            }
+
+            return NextResponse.json({
+                success: true,
+                requisition: {
+                    ...updatedEditRecord,
+                    property: propertyObj,
+                    uploader: uploaderObj,
+                    items: updatedNotesObj.items || [],
+                    categories: updatedNotesObj.categories || [],
+                    total_estimated_amount: updatedNotesObj.total_estimated_amount || 0,
+                    total_items_count: updatedNotesObj.items?.length || 0,
+                    site_notes: updatedNotesObj.site_notes || '',
+                    vendor_quotation: siteVendorQuotation({ ...updatedEditRecord, vendor_quotation: updatedNotesObj.vendor_quotation }),
+                    approver_info: updatedNotesObj.approver_info || null,
+                    po_info: updatedNotesObj.po_info || null,
+                    edit_info: editInfo,
+                    edit_history: editHistory,
+                    is_over_budget: Boolean(artifacts.isOverBudget),
+                    budget_limit: artifacts.allocatedBudgetLimit || 0,
+                    over_budget_amount: artifacts.overBudgetAmount || 0,
+                    budget_breakdown: updatedNotesObj.budget_breakdown || null,
+                },
+            });
+        }
+
+        if (!profile.is_master_admin) {
+            const { data: memberships, error } = await adminSupabase.from('organization_memberships')
+                .select('role').eq('organization_id', existing.organization_id).eq('user_id', user.id).eq('is_active', true);
+            if (error) throw error;
+            const roles = ['procurement', 'purchase_manager', 'purchase_executive', 'org_super_admin', 'ops_super_admin', 'master_admin'];
+            if (!memberships?.some(member => roles.includes(member.role))) {
+                return NextResponse.json({ error: 'Procurement or administrator access is required.' }, { status: 403 });
+            }
+        }
+        if (!isMultipart || !formData) {
+            return NextResponse.json({ error: 'Use the individual approval endpoint for decisions, or the quotation/PO form.' }, { status: 400 });
+        }
+
         let updateStatus = existing.status;
         let vendorQuotationData = siteVendorQuotation(existing);
         let approverInfoData = existingNotesObj.approver_info || null;
         let poInfoData = existingNotesObj.po_info || null;
 
-        if (contentType.includes('multipart/form-data')) {
-            const formData = await request.formData();
-            const action = formData.get('action') as string || 'submit_for_approval';
+        if (isMultipart && formData) {
+            const action = requestAction;
 
             if (!['issue_po', 'submit_for_approval'].includes(action)) {
                 return NextResponse.json({ error: 'Invalid requisition action.' }, { status: 400 });

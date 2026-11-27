@@ -1,15 +1,17 @@
-import { siteVendorQuotation } from '@/backend/lib/procurement/requisition-approval.mjs';
+import {
+    siteVendorQuotation,
+    siteEditInfo,
+    siteEditHistory,
+    canSiteEditRequisition,
+    prepareRequisitionEdit,
+    requisitionNotes,
+} from '@/backend/lib/procurement/requisition-approval.mjs';
+import { prepareRequisitionArtifacts } from '@/backend/lib/procurement/requisitionSubmission';
 import { NextRequest, NextResponse } from 'next/server';
 import { createAdminClient } from '@/frontend/utils/supabase/admin';
 import { resolveCaller, isCallerError, forbidden, canUseProperty, propertyOrgId, internalOrgIds, internalPropertyIds } from '@/backend/lib/auth/callerAccess';
-import { generateRequisitionExcelWorkbook, RequisitionItemData } from '@/backend/lib/excel/requisitionExcelGenerator';
-import { PricingAndAliasService, normalizeText } from '@/backend/lib/procurement/pricingAndAliasService';
+import type { RequisitionItemData } from '@/backend/lib/excel/requisitionExcelGenerator';
 import { deliverySummaries, type DeliverySummary } from '@/backend/lib/procurement/requisitionDelivery';
-
-const MONTH_NAMES = [
-    'January', 'February', 'March', 'April', 'May', 'June',
-    'July', 'August', 'September', 'October', 'November', 'December'
-];
 
 export async function GET(request: NextRequest) {
     try {
@@ -110,6 +112,8 @@ export async function GET(request: NextRequest) {
                 site_notes: parsedData.site_notes || parsedData.creator_notes || (typeof req.notes === 'string' && !req.notes.trim().startsWith('{') ? req.notes : '') || '',
                 vendor_quotation: siteVendorQuotation({ ...req, vendor_quotation: parsedData.vendor_quotation }),
                 approver_info: parsedData.approver_info || null,
+                edit_info: siteEditInfo({ notes: parsedData }),
+                edit_history: siteEditHistory({ notes: parsedData }),
                 is_over_budget: Boolean(isOverBudget),
                 budget_limit: Number(budgetLimit) || 0,
                 over_budget_amount: Number(overBudgetAmount) || 0,
@@ -148,22 +152,6 @@ export async function POST(request: NextRequest) {
         };
         const adminSupabase = createAdminClient();
 
-        // Ensure storage bucket exists
-        const { data: bucket, error: bucketErr } = await adminSupabase.storage.getBucket('procurement_requisitions');
-        if (bucketErr) {
-            await adminSupabase.storage.createBucket('procurement_requisitions', {
-                public: true,
-                allowedMimeTypes: [
-                    'application/vnd.ms-excel',
-                    'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-                    'text/csv',
-                    'application/csv',
-                    'application/octet-stream',
-                    'application/pdf'
-                ],
-            });
-        }
-
         const contentType = request.headers.get('content-type') || '';
         let organizationId = '';
         let propertyId = '';
@@ -173,12 +161,10 @@ export async function POST(request: NextRequest) {
         let userId = '';
         let siteNotes = '';
         let rawItems: RequisitionItemData[] = [];
-        let uploadedFileBuffer: Buffer | null = null;
-        let uploadedFileName = '';
-
+        let uploadedFile: File | null = null;
         let isPreviewOnly = false;
+
         if (contentType.includes('application/json')) {
-            // Interactive UI submission with dual-table items
             const body = await request.json();
             isPreviewOnly = Boolean(body.preview_only);
             organizationId = body.organization_id;
@@ -196,71 +182,9 @@ export async function POST(request: NextRequest) {
             const refusedJson = await refuseUnlessAllowed(organizationId, propertyId);
             if (refusedJson) return refusedJson;
             userId = caller.userId;
-
-            // CRITICAL SECURITY RULE: Resolve authorized prices server-side from item_site_prices / procurement_catalog
-            const siteCatalog = await PricingAndAliasService.getCatalogWithSitePrices(organizationId, propertyId);
-            const verifiedPriceMap = new Map<string, number>();
-            siteCatalog.forEach((item: any) => {
-                verifiedPriceMap.set(normalizeText(item.name), item.unit_price);
-            });
-
-            // Enforce verified price snapshot on each line item
-            const verifiedItems: RequisitionItemData[] = rawItems.map(item => {
-                const normalized = normalizeText(item.name);
-                const serverVerifiedPrice = verifiedPriceMap.get(normalized);
-                const finalPrice = serverVerifiedPrice !== undefined ? serverVerifiedPrice : (item.unit_price || 0);
-
-                return {
-                    ...item,
-                    unit_price: finalPrice
-                };
-            });
-
-            // Fetch property & user info to populate Excel template concurrently
-            const [{ data: prop }, { data: uploader }] = await Promise.all([
-                adminSupabase.from('properties').select('id, name, address, city').eq('id', propertyId).single(),
-                adminSupabase.from('users').select('id, full_name, email, phone').eq('id', userId).single()
-            ]);
-
-            const monthName = MONTH_NAMES[requisitionMonth - 1] || 'Month';
-            const now = new Date();
-            const dateFormatted = `${now.getDate()}/${now.getMonth() + 1}/${now.getFullYear()}`;
-
-            // Generate exact Excel workbook buffer matching user photos
-            uploadedFileBuffer = await generateRequisitionExcelWorkbook({
-                propertyName: `${prop?.name || 'Site Property'} (${floorTag})`,
-                propertyLocation: prop?.address || prop?.city || prop?.name,
-                requesterName: uploader?.full_name || uploader?.email || 'Site Admin',
-                requesterPhone: uploader?.phone || '',
-                dateFormatted,
-                monthName,
-                monthIndex: requisitionMonth,
-                year: requisitionYear,
-                siteNotes,
-                items: verifiedItems,
-                status: 'submitted'
-            });
-
-            const cleanPropName = (prop?.name || 'Requisition').replace(/\s+/g, '_');
-            const cleanFloor = floorTag.replace(/\s+/g, '_');
-            uploadedFileName = `${cleanPropName}_${cleanFloor}_${monthName}_${requisitionYear}_requisition.xlsx`;
-            rawItems = verifiedItems;
-
-            // IF PREVIEW ONLY: Return the generated Excel directly as a file download without touching the DB
-            if (isPreviewOnly && uploadedFileBuffer) {
-                return new NextResponse(new Uint8Array(uploadedFileBuffer), {
-                    status: 200,
-                    headers: {
-                        'Content-Type': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-                        'Content-Disposition': `attachment; filename="${uploadedFileName}"`,
-                        'Content-Length': uploadedFileBuffer.length.toString()
-                    }
-                });
-            }
         } else {
-            // FormData File Upload
             const form = await request.formData();
-            const file = form.get('file') as File | null;
+            uploadedFile = form.get('file') as File | null;
             organizationId = form.get('organization_id') as string;
             propertyId = form.get('property_id') as string;
             floorTag = (form.get('floor_tag') as string) || 'All Floors';
@@ -269,115 +193,46 @@ export async function POST(request: NextRequest) {
             siteNotes = (form.get('site_notes') as string) || (form.get('notes') as string) || '';
             userId = form.get('user_id') as string;
 
-            if (!file || !organizationId || !propertyId || !requisitionMonth || !requisitionYear || !userId) {
+            if (!uploadedFile || !organizationId || !propertyId || !requisitionMonth || !requisitionYear || !userId) {
                 return NextResponse.json({ error: 'Missing required fields' }, { status: 400 });
             }
             const refusedForm = await refuseUnlessAllowed(organizationId, propertyId);
             if (refusedForm) return refusedForm;
             userId = caller.userId;
-
-            uploadedFileName = file.name;
-            const arrayBuffer = await file.arrayBuffer();
-            uploadedFileBuffer = Buffer.from(arrayBuffer);
         }
 
-        // Upload generated / submitted Excel to Supabase storage
-        const filePath = `${organizationId}/${propertyId}/${requisitionYear}_${requisitionMonth}_${Date.now()}_${uploadedFileName}`;
-        const { data: uploadData, error: uploadError } = await adminSupabase.storage
-            .from('procurement_requisitions')
-            .upload(filePath, uploadedFileBuffer, {
-                upsert: true,
-                contentType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
-            });
-
-        if (uploadError) {
-            console.error('[Requisition Upload Storage Error]:', uploadError);
-            return NextResponse.json({ error: 'Failed to upload file to storage', details: uploadError.message }, { status: 500 });
-        }
-
-        const publicUrl = `/api/storage/procurement_requisitions/${uploadData.path}`;
-
-        // Calculate total cost using locked price snapshots
-        const totalEstimatedAmount = rawItems.reduce((acc, curr) => acc + ((curr.requested_qty || 0) * (curr.unit_price || 0)), 0);
-        const requestedItemsCount = rawItems.filter(i => (i.requested_qty || 0) > 0).length;
-
-        // Category breakdown calculation
-        let hkSpent = 0;
-        let beverageSpent = 0;
-        let otherSpent = 0;
-
-        rawItems.forEach(item => {
-            const cost = (Number(item.requested_qty) || 0) * (Number(item.unit_price) || 0);
-            const cat = (item.category || '').toLowerCase();
-            if (cat.includes('bev') || cat.includes('pantry') || cat.includes('tea') || cat.includes('coffee') || cat.includes('ccd')) {
-                beverageSpent += cost;
-            } else if (cat.includes('hk') || cat.includes('housekeeping') || cat.includes('tissue') || cat.includes('stationery') || cat.includes('paper')) {
-                hkSpent += cost;
-            } else {
-                otherSpent += cost;
-            }
-        });
-
-        // Query property monthly requisition budget (floor-specific first, then fallback to All Floors)
-        let allocatedBudgetLimit = 0;
-        let hkBudgetLimit = 0;
-        let beverageBudgetLimit = 0;
-        let budgetFound = false;
-
-        try {
-            const { data: budgetData } = await adminSupabase
-                .from('property_monthly_requisition_budgets')
-                .select('*')
-                .eq('organization_id', organizationId)
-                .eq('property_id', propertyId)
-                .eq('is_active', true);
-
-            if (budgetData && budgetData.length > 0) {
-                const floorMatch = budgetData.find((b: any) => b.floor_tag === floorTag);
-                const allFloorsMatch = budgetData.find((b: any) => b.floor_tag === 'All Floors');
-                const matchedBudget = floorMatch || allFloorsMatch || budgetData[0];
-
-                if (matchedBudget) {
-                    budgetFound = true;
-                    allocatedBudgetLimit = Number(matchedBudget.total_budget) || (Number(matchedBudget.hk_budget) + Number(matchedBudget.beverage_budget)) || 0;
-                    hkBudgetLimit = Number(matchedBudget.hk_budget) || 0;
-                    beverageBudgetLimit = Number(matchedBudget.beverage_budget) || 0;
-                }
-            }
-        } catch (bErr) {
-            console.warn('[Requisition Budget Lookup Warning]:', bErr);
-        }
-
-        const isOverBudget = budgetFound && allocatedBudgetLimit > 0 && totalEstimatedAmount > allocatedBudgetLimit;
-        const overBudgetAmount = isOverBudget ? Math.max(0, totalEstimatedAmount - allocatedBudgetLimit) : 0;
-
-        // Store structured JSON inside notes column for rich persistence
-        const notesPayload = JSON.stringify({
-            floor_tag: floorTag,
-            site_notes: siteNotes,
-            total_estimated_amount: totalEstimatedAmount,
-            total_items_count: rawItems.length,
-            requested_items_count: requestedItemsCount > 0 ? requestedItemsCount : rawItems.length,
-            categories: Array.from(new Set(rawItems.map(i => i.category || 'HK'))),
+        const artifacts = await prepareRequisitionArtifacts(adminSupabase, {
+            organizationId,
+            propertyId,
+            requisitionMonth,
+            requisitionYear,
+            floorTag,
+            siteNotes,
+            userId,
             items: rawItems,
-            submitted_at: new Date().toISOString(),
-            is_over_budget: isOverBudget,
-            budget_limit: allocatedBudgetLimit,
-            over_budget_amount: overBudgetAmount,
-            budget_breakdown: {
-                total_budget: allocatedBudgetLimit,
-                hk_budget: hkBudgetLimit,
-                beverage_budget: beverageBudgetLimit,
-                total_spent: totalEstimatedAmount,
-                hk_spent: hkSpent,
-                beverage_spent: beverageSpent,
-                other_spent: otherSpent
-            }
+            file: uploadedFile,
+            previewOnly: isPreviewOnly,
         });
+
+        if (artifacts.previewResponse) {
+            return artifacts.previewResponse;
+        }
+
+        const publicUrl = artifacts.publicUrl!;
+        const uploadedFileName = artifacts.uploadedFileName!;
+        const fileSizeBytes = artifacts.fileSizeBytes || 0;
+        const totalEstimatedAmount = artifacts.totalEstimatedAmount || 0;
+        const requestedItemsCount = artifacts.requestedItemsCount || 0;
+        const isOverBudget = Boolean(artifacts.isOverBudget);
+        const allocatedBudgetLimit = artifacts.allocatedBudgetLimit || 0;
+        const overBudgetAmount = artifacts.overBudgetAmount || 0;
+        const baseNotesObj = artifacts.baseNotesObj || {};
+        rawItems = artifacts.rawItems || rawItems;
+        const notesPayload = JSON.stringify(baseNotesObj);
 
         // IDEMPOTENCY & DUPLICATION PREVENTION:
         // Check if a requisition for this property, month, year, and floor tag already exists
-        const { data: existingRecords, error: existingError } = await adminSupabase
+        const { data: existingRecords } = await adminSupabase
             .from('property_monthly_requisitions')
             .select(`
                 *,
@@ -392,14 +247,19 @@ export async function POST(request: NextRequest) {
             .order('created_at', { ascending: false });
 
         let finalRecord = null;
+        let isEditUpdate = false;
 
         if (existingRecords && existingRecords.length > 0) {
             const latest = existingRecords[0];
             const msSinceCreation = Date.now() - new Date(latest.created_at).getTime();
+            const latestNotes = requisitionNotes(latest);
+            const sameItems = JSON.stringify((latestNotes.items || []).map((i: any) => [i.name, i.requested_qty, i.available_stock_qty, i.remarks || '']))
+                === JSON.stringify(rawItems.map((i: any) => [i.name, i.requested_qty, i.available_stock_qty, i.remarks || '']));
+            const sameNotes = (latestNotes.site_notes || '') === siteNotes;
 
-            // 1. Debounce rapid double-submissions within 45 seconds by the same user
-            if (msSinceCreation < 45000 && latest.uploaded_by === userId) {
-                console.log(`[Requisition Deduplication]: Debounced concurrent submission within ${msSinceCreation}ms. Returning existing requisition ${latest.id}`);
+            // 1. Debounce identical rapid double-submissions within 45 seconds by the same user
+            if (msSinceCreation < 45000 && latest.uploaded_by === userId && sameItems && sameNotes) {
+                console.log(`[Requisition Deduplication]: Debounced identical submission within ${msSinceCreation}ms. Returning existing requisition ${latest.id}`);
                 return NextResponse.json({
                     success: true,
                     requisition: latest,
@@ -408,18 +268,33 @@ export async function POST(request: NextRequest) {
                 });
             }
 
-            // 2. If existing record is still in 'submitted' or 'draft' status, UPDATE it (upsert) instead of creating duplicate row
-            if (['submitted', 'draft'].includes(latest.status)) {
-                console.log(`[Requisition Upsert]: Updating existing ${latest.status} requisition ${latest.id} instead of creating duplicate`);
+            // 2. If existing record is in an editable site status, update it cleanly (marking Edited when already uploaded)
+            if (canSiteEditRequisition(latest)) {
+                const nowIso = new Date().toISOString();
+                let finalNotes = notesPayload;
+                if (latest.status !== 'draft') {
+                    const { data: editorUser } = await adminSupabase.from('users').select('full_name, email').eq('id', userId).maybeSingle();
+                    const editorName = editorUser?.full_name || editorUser?.email || caller.email || 'Site Team';
+                    finalNotes = JSON.stringify(prepareRequisitionEdit(latest, {
+                        baseNotes: baseNotesObj,
+                        editorId: userId,
+                        editorName,
+                        editedAt: nowIso,
+                        nextStatus: 'submitted',
+                    }));
+                    isEditUpdate = true;
+                }
+
                 const { data: updatedRecord, error: updateError } = await adminSupabase
                     .from('property_monthly_requisitions')
                     .update({
                         file_url: publicUrl,
                         file_name: uploadedFileName,
-                        file_size_bytes: uploadedFileBuffer.length,
-                        notes: notesPayload,
-                        uploaded_by: userId,
-                        updated_at: new Date().toISOString(),
+                        file_size_bytes: fileSizeBytes,
+                        notes: finalNotes,
+                        status: 'submitted',
+                        uploaded_by: latest.uploaded_by || userId,
+                        updated_at: nowIso,
                         is_over_budget: isOverBudget,
                         budget_limit: allocatedBudgetLimit,
                         over_budget_amount: overBudgetAmount
@@ -440,7 +315,7 @@ export async function POST(request: NextRequest) {
             }
         }
 
-        // 3. If no existing active record found or update failed, insert new record
+        // 3. If no existing editable record found, insert new record
         if (!finalRecord) {
             const insertPayload: any = {
                 organization_id: organizationId,
@@ -450,7 +325,7 @@ export async function POST(request: NextRequest) {
                 floor_tag: floorTag,
                 file_url: publicUrl,
                 file_name: uploadedFileName,
-                file_size_bytes: uploadedFileBuffer.length,
+                file_size_bytes: fileSizeBytes,
                 notes: notesPayload,
                 status: 'submitted',
                 uploaded_by: userId,
@@ -477,6 +352,8 @@ export async function POST(request: NextRequest) {
             finalRecord = insertedRecord;
         }
 
+        const outboxType = isEditUpdate ? 'REQUISITION_EDITED' : 'REQUISITION_UPLOADED';
+
         // Submitting a requisition does not write to stock. Stock changes only through
         // the stock screens and confirmed delivery challans (matched by catalog item id).
 
@@ -484,7 +361,7 @@ export async function POST(request: NextRequest) {
         (async () => {
             try {
                 await adminSupabase.from('event_outbox').insert({
-                    event_type: 'REQUISITION_UPLOADED',
+                    event_type: outboxType,
                     entity_id: finalRecord.id,
                     payload: {
                         requisition_id: finalRecord.id,
@@ -502,6 +379,8 @@ export async function POST(request: NextRequest) {
                         budget_limit: allocatedBudgetLimit,
                         over_budget_amount: overBudgetAmount,
                         uploaded_by: userId,
+                        is_edited: isEditUpdate,
+                        edit_info: isEditUpdate ? siteEditInfo(finalRecord) : null,
                         status: 'submitted'
                     }
                 });
@@ -510,9 +389,14 @@ export async function POST(request: NextRequest) {
             }
         })();
 
+        const editInfo = siteEditInfo(finalRecord);
         return NextResponse.json({
             success: true,
-            requisition: finalRecord,
+            requisition: {
+                ...finalRecord,
+                edit_info: editInfo,
+                edit_history: siteEditHistory(finalRecord),
+            },
             file_url: publicUrl
         });
     } catch (err: any) {
