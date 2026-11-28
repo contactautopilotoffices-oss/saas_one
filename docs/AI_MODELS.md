@@ -1,8 +1,8 @@
-# AI models: every model is configurable from the Brain console
+# AI model settings
 
 **Owner rule, 2026-11-15:** every time an AI model (LLM, vision, speech, embedding) is added anywhere in this
-software, or an existing feature starts calling a new model, it must also be added to the Tech console's
-**Brain → AI models** screen, so the Tech team can see it and change it there. A change that adds a model call
+software, or an existing feature starts calling a new model, it must also be added to the Tech console. Use
+**HR Configs → HR AI models** for Otto and Recruitment and **Brain → AI models** for other jobs. A change that adds a model call
 without doing this is not finished.
 
 The screen reads everything from code. Nothing on it is typed in by hand, so a model that is not registered in code

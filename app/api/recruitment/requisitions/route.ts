@@ -5,8 +5,9 @@ import { requisitionNotifier } from "@/backend/lib/candidates/requisition-notify
 import { createRequisition, listRequisitions } from "@/backend/lib/candidates/requisitions";
 import type { RequisitionListResponse } from "@/backend/lib/candidates/types";
 
-import { actorFor, errorResponse, rateLimited, readJson, requireOrgMember } from "../_lib/auth";
-import { formHierarchy } from "../_lib/people";
+import { actorFor, errorResponse, rateLimited, requireOrgMember } from "../_lib/auth";
+import { employeeDepartment, formHierarchy } from "../_lib/people";
+import { readRequisitionForm, readRequisitionJd } from "./_lib/form";
 
 export const runtime = "nodejs";
 
@@ -20,15 +21,17 @@ export async function GET(request: Request) {
   try {
     const { config: _config, member: _member, ...access } = auth.access;
     void _config; void _member;
-    const [requisitions, hierarchy] = await Promise.all([
+    const [requisitions, hierarchy, requesterDepartment] = await Promise.all([
       listRequisitions(auth.admin, auth.orgId, { userId: auth.user.id, seesAll: access.seesAll, headOf: access.headOf }),
       // Owner 2026-11-24: the form's department and role dropdowns (only those who may raise a request need them).
       access.canRaise ? formHierarchy(auth.admin, auth.orgId, auth.access.config) : Promise.resolve(undefined),
+      access.canRaise ? employeeDepartment(auth.admin, auth.orgId, auth.user.id) : Promise.resolve(undefined),
     ]);
     const body: RequisitionListResponse = {
       requisitions, access,
       departments: auth.access.config.departmentHeads.map((h) => h.department),
       ...(hierarchy ? { hierarchy } : {}),
+      requesterDepartment,
     };
     return NextResponse.json(body);
   } catch (error) {
@@ -38,8 +41,9 @@ export async function GET(request: Request) {
 
 /** Stage 1: raise a request: { orgId, ...the form, submit?: true }. A draft until submitted. Only for those who may raise (canRaise). */
 export async function POST(request: Request) {
-  const body = await readJson(request);
-  if (body instanceof NextResponse) return body;
+  const input = await readRequisitionForm(request);
+  if (input instanceof NextResponse) return input;
+  const body = input.fields;
   const auth = await requireOrgMember(body.orgId);
   if (auth.error) return auth.error;
   // Owner 2026-11-20: only the people the Tech team set may raise a request ("it must be only for the logins").
@@ -49,9 +53,13 @@ export async function POST(request: Request) {
   const fields = { ...body };
   delete fields.orgId;
   try {
-    const by = await actorFor(auth.admin, auth.user);
-    const hierarchy = fields.submit === true ? await formHierarchy(auth.admin, auth.orgId, auth.access.config) : undefined;
-    return NextResponse.json({ requisition: await createRequisition(auth.admin, auth.orgId, by, fields, { notify: requisitionNotifier(auth.admin, auth.orgId), hierarchy }) });
+    const [by, hierarchy, requesterDepartment, jd] = await Promise.all([
+      actorFor(auth.admin, auth.user),
+      fields.submit === true ? formHierarchy(auth.admin, auth.orgId, auth.access.config) : undefined,
+      employeeDepartment(auth.admin, auth.orgId, auth.user.id),
+      readRequisitionJd(input.file),
+    ]);
+    return NextResponse.json({ requisition: await createRequisition(auth.admin, auth.orgId, by, fields, { notify: requisitionNotifier(auth.admin, auth.orgId), hierarchy, requesterDepartment, jd }) });
   } catch (error) {
     return errorResponse(error, "Couldn't save the hiring request");
   }

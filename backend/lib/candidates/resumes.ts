@@ -162,13 +162,13 @@ async function attachAlreadyKnown(client: SupabaseClient, orgId: string, files: 
 export async function resolveDuplicate(client: SupabaseClient, storage: ResumeStorage, orgId: string, by: { id: string; name: string | null }, id: unknown, action: unknown): Promise<void> {
   if (action !== "update" && action !== "delete") throw new CandidateActionError(400, 'Say what to do: "update" or "delete".');
   const row = await getRow(client, orgId, id, false);
-  const { data, error } = await client.from(TABLE).select("id, candidate_id, file_name, duplicate_state").eq("organization_id", orgId).eq("id", row.id).maybeSingle();
+  const { data, error } = await client.from(TABLE).select("id, candidate_id, file_name, duplicate_state, duplicate_resolved_at").eq("organization_id", orgId).eq("id", row.id).maybeSingle();
   if (error) {
     if (sourceColumnsMissing(error)) throw new CandidateActionError(503, "This needs a database update first: run 20261116000004_sourcing_duplicates.sql in Supabase.");
     fail("load the file", error);
   }
-  const file = data as { id: string; candidate_id: string | null; file_name: string; duplicate_state: string | null } | null;
-  if (!file || file.duplicate_state !== "pending") throw new CandidateActionError(409, "This file is no longer waiting for a decision.");
+  const file = data as { id: string; candidate_id: string | null; file_name: string; duplicate_state: string | null; duplicate_resolved_at: string | null } | null;
+  if (!file || file.duplicate_state !== "pending" || file.duplicate_resolved_at) throw new CandidateActionError(409, "This file is no longer waiting for a decision.");
   const { recordAction } = await import("./actions");
   if (action === "update") {
     const now = new Date().toISOString();
@@ -481,14 +481,15 @@ async function recordRepeats(client: SupabaseClient, orgId: string, by: { id: st
 }
 
 /** The repeats still open, newest first, for the "Already in the database" section. */
-export async function listRepeats(client: SupabaseClient, orgId: string, limit = 20): Promise<{ repeats: ResumeRepeat[]; total: number }> {
+export async function listRepeats(client: SupabaseClient, orgId: string, limit = 20, page = 1): Promise<{ repeats: ResumeRepeat[]; total: number }> {
   const { data, error, count } = await client
     .from(REPEATS)
     .select("id, file_id, candidate_id, uploaded_by_name, created_at", { count: "exact" })
     .eq("organization_id", orgId)
     .is("dismissed_at", null)
     .order("created_at", { ascending: false })
-    .limit(limit);
+    .order("id")
+    .range((page - 1) * limit, page * limit - 1);
   if (error) {
     if (repeatsMissing(error)) return { repeats: [], total: 0 };
     fail("load the repeated uploads", error);
@@ -511,6 +512,19 @@ export async function listRepeats(client: SupabaseClient, orgId: string, limit =
     }),
     total: count ?? rows.length,
   };
+}
+
+/** Clear both review queues while retaining every file and its history. */
+export async function clearDuplicateReview(client: SupabaseClient, orgId: string, userId: string): Promise<void> {
+  const now = new Date().toISOString();
+  const [duplicates, repeats] = await Promise.all([
+    client.from(TABLE).update({ duplicate_resolved_at: now, duplicate_resolved_by: userId })
+      .eq("organization_id", orgId).eq("duplicate_state", "pending").is("duplicate_resolved_at", null),
+    client.from(REPEATS).update({ dismissed_at: now, dismissed_by: userId })
+      .eq("organization_id", orgId).is("dismissed_at", null),
+  ]);
+  const error = duplicates.error ?? repeats.error;
+  if (error) fail("clear the review lists", error);
 }
 
 /** HR has seen the repeat: it leaves the section (the history entry stays). */
@@ -653,7 +667,7 @@ function applyQuery<Q extends Filterable<Q>>(query: Q, q: ResumeListQuery): Q {
   // Owner 2026-11-11: the files HR has to look at: text that could not be read, or details that could not.
   else if (q.link === "attention") query = query.or("text_status.eq.unreadable,text_status.eq.failed,extract_status.eq.failed");
   // Owner 2026-11-16: a second CV for a person who already had one, waiting for HR (Update the CV or delete it).
-  else if (q.link === "duplicate") query = query.eq("duplicate_state", "pending");
+  else if (q.link === "duplicate") query = query.eq("duplicate_state", "pending").is("duplicate_resolved_at", null);
   else if (q.link === "reading") query = query.or("text_status.in.(pending,working,scan,scanning),and(text_status.eq.ready,extract_status.in.(pending,working))");
   return query;
 }

@@ -18,7 +18,7 @@ import { knownNote, resetKnownFlagCheck } from "../../backend/lib/candidates/kno
 import { parseSheet } from "../../backend/lib/candidates/parse-sheet";
 import { createRecord } from "../../backend/lib/candidates/records";
 import { processResumeText } from "../../backend/lib/candidates/resume-text";
-import { confirmResumeUploads, dismissRepeat, listRepeats, listResumeFiles, parseResumeQuery, prepareResumeUploads, resolveDuplicate, type ResumeStorage } from "../../backend/lib/candidates/resumes";
+import { clearDuplicateReview, confirmResumeUploads, dismissRepeat, listRepeats, listResumeFiles, parseResumeQuery, prepareResumeUploads, resolveDuplicate, type ResumeStorage } from "../../backend/lib/candidates/resumes";
 
 import { freshDb, SOURCING_MIGRATION } from "./db-stub";
 import { pgliteSupabase } from "./pglite-supabase";
@@ -189,6 +189,21 @@ describe("already in the database: only a person who came a second time", () => 
     assert.deepEqual([repeats, total], [[], 0]);
     await assert.rejects(dismissRepeat(client, ORG, USER, repeats[0]?.id ?? "00000000-0000-0000-0000-0000000000ff"), /already dismissed/);
     await assert.rejects(dismissRepeat(client, ORG, USER, "nope"), /uuid/);
+  });
+
+  it("clears both duplicate review queues while preserving uploads and activity", async () => {
+    const copy = await upload("Asha CV again.pdf");
+    await prepareResumeUploads(client, store.storage, ORG, HR2, { device: "Shwetha", files: [{ index: 0, name: "Asha.pdf", size: 1000, sha256: sha("Asha CV.pdf") }] });
+    assert.equal((await pending())[0]?.id, copy);
+    assert.equal((await listRepeats(client, ORG, 1, 2)).repeats.length, 0);
+    const history = await listActions(client, ORG, asha.candidateId);
+    await clearDuplicateReview(client, ORG, USER);
+    await clearDuplicateReview(client, ORG, USER);
+    assert.deepEqual(await pending(), []);
+    assert.deepEqual(await listRepeats(client, ORG), { repeats: [], total: 0 });
+    assert.equal(store.objects.has(`${ORG}/${copy}.pdf`), true);
+    assert.deepEqual(await listActions(client, ORG, asha.candidateId), history);
+    await assert.rejects(resolveDuplicate(client, store.storage, ORG, ME, copy, "delete"), /no longer waiting/);
   });
 
   it("accepts Naukri as where an upload came from", async () => {

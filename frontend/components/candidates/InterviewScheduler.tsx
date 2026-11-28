@@ -2,7 +2,7 @@
 
 import React, { useEffect, useMemo, useState } from 'react';
 import dynamic from 'next/dynamic';
-import { CalendarClock, Check, Copy, MessageCircle, Mic, Search, Video, X } from 'lucide-react';
+import { CalendarClock, Check, Copy, Mic, Search, Video, X } from 'lucide-react';
 import { boardColumns, columnIndexOf, findStage, stageGroups, type StageDef } from '@/backend/lib/candidates/stage-list';
 import { INTERVIEW_MODE_LABELS, INTERVIEW_MODES, INTERVIEW_STATUS_LABELS, RECOMMENDATION_LABELS, type CandidateRecord, type Interview, type InterviewMode, type InterviewSend, type Position, type PositionMember } from '@/backend/lib/candidates/types';
 import { api, qs } from './api';
@@ -49,7 +49,7 @@ export function interviewWhen(local: string): string {
     return d.toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', weekday: 'short', day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit' });
 }
 
-function CopyLink({ url, text }: { url: string; text: string }) {
+function CopyLink({ url }: { url: string }) {
     const { notify } = useUi();
     const copy = async () => {
         try { await navigator.clipboard.writeText(url); notify('Link copied', 'success'); } catch { notify('Copy did not work: select the link and copy it.', 'error'); }
@@ -58,7 +58,6 @@ function CopyLink({ url, text }: { url: string; text: string }) {
         <div className="flex flex-wrap items-center gap-x-2 gap-y-2">
             <input readOnly value={url} onFocus={e => e.currentTarget.select()} aria-label="The interview's link" className={`${INPUT} h-9 min-w-0 flex-1 font-mono text-xs`} />
             <button type="button" onClick={() => void copy()} className={`${BTN_SECONDARY} h-9 px-3`}><Copy className="h-4 w-4" />Copy</button>
-            <a href={`https://wa.me/?text=${encodeURIComponent(`${text}\n${url}`)}`} target="_blank" rel="noreferrer" className={`${BTN_SECONDARY} h-9 px-3`}><MessageCircle className="h-4 w-4" />Share on WhatsApp</a>
         </div>
     );
 }
@@ -127,7 +126,7 @@ export function ScheduleInterviewForm({ orgId, record, position, member, stages,
                 {done.interview?.joinUrl && (
                     <div>
                         <p className={LABEL}>The link, for everyone: interviewers go straight in, {first} waits to be let in</p>
-                        <div className="mt-1.5"><CopyLink url={done.interview.joinUrl} text={`Interview: ${record.fullName} · ${done.interview.round ?? round} · ${position.title} · ${interviewWhen(at)}`} /></div>
+                        <div className="mt-1.5"><CopyLink url={done.interview.joinUrl} /></div>
                     </div>
                 )}
                 {done.sent.length > 0 && (
@@ -364,7 +363,7 @@ export function InterviewsList({ orgId, record, nonce, onRecord }: { orgId: stri
                         {i.mode === 'online' && i.meetingId && ahead && (!i.meeting || i.meeting.status === 'scheduled' || i.meeting.status === 'live') && (
                             <div className="mt-2.5 space-y-2">
                                 <button type="button" onClick={() => setOpened({ kind: 'call', meetingId: i.meetingId! })} className={BTN_PRIMARY}><Video className="h-4 w-4" />{i.meeting?.status === 'live' ? 'Join the call now' : 'Join call'}</button>
-                                {i.joinUrl && <CopyLink url={i.joinUrl} text={`Interview: ${record.fullName} · ${i.round ?? ''} · ${interviewWhen(i.at)}`} />}
+                                {i.joinUrl && <CopyLink url={i.joinUrl} />}
                             </div>
                         )}
                         {i.mode === 'in_person' && (!i.meeting || ['recording', 'failed', 'deleted', 'discarded'].includes(i.meeting.status)) && (

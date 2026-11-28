@@ -1,9 +1,10 @@
 'use client';
 
 import React, { useEffect, useRef, useState } from 'react';
-import { ChevronDown, ChevronRight, ClipboardCheck, Download, FileText, ListChecks, MoreHorizontal, PanelRightOpen, Plus, UserPlus, X } from 'lucide-react';
+import { ChevronDown, ChevronRight, ClipboardCheck, Download, FileText, ListChecks, MoreHorizontal, PanelRightOpen, Plus, Send, UserPlus, X } from 'lucide-react';
 import { boardColumns, findStage, reasonNeeded, sideStages, stageGroups, unlistedStage, type StageDef } from '@/backend/lib/candidates/stage-list';
-import { recordOrigin, type CandidateRecord, type Position, type PositionMember, type Stage } from '@/backend/lib/candidates/types';
+import { DEFAULT_OUTREACH, stageNotification, type OutreachSettings } from '@/backend/lib/candidates/outreach-settings';
+import { recordOrigin, type CandidateRecord, type Position, type PositionMember, type Stage, type StageNotification } from '@/backend/lib/candidates/types';
 import { api, qs } from './api';
 import CandidateDetails, { type CandidateTab } from './CandidateDetails';
 import { downloadCsv, recordsToCsv } from './export-csv';
@@ -91,7 +92,7 @@ const isReferral = (r: CandidateRecord | null) => !!r?.candidateSource && /refer
  * The card's "…" menu (owner 2026-11-25, to the reference board): the per-card actions in one place instead of a
  * hover-only X. Escape or a click elsewhere closes it; focus goes back to the button.
  */
-function CardMenu({ name, canOpen, busy, onOpen, onAssess, onRemove }: { name: string; canOpen: boolean; busy: boolean; onOpen: () => void; onAssess: () => void; onRemove: () => void }) {
+function CardMenu({ name, canOpen, busy, onOpen, onAssess, onNotify, onRemove }: { name: string; canOpen: boolean; busy: boolean; onOpen: () => void; onAssess: () => void; onNotify?: () => void; onRemove: () => void }) {
     const [open, setOpen] = useState(false);
     const wrap = useRef<HTMLDivElement>(null);
     const trigger = useRef<HTMLButtonElement>(null);
@@ -121,6 +122,9 @@ function CardMenu({ name, canOpen, busy, onOpen, onAssess, onRemove }: { name: s
                     <button type="button" role="menuitem" disabled={!canOpen} onClick={() => { setOpen(false); onAssess(); }} className={`${item} text-text-primary hover:bg-muted`}>
                         <ClipboardCheck className="h-4 w-4 shrink-0 text-text-secondary" aria-hidden />Send assessment
                     </button>
+                    {onNotify && <button type="button" role="menuitem" disabled={busy} onClick={() => { setOpen(false); onNotify(); }} className={`${item} text-text-primary hover:bg-muted`}>
+                        <Send className="h-4 w-4 shrink-0 text-text-secondary" aria-hidden />Notify candidate
+                    </button>}
                     <button type="button" role="menuitem" disabled={busy} onClick={() => { setOpen(false); onRemove(); }} className={`${item} text-error hover:bg-error/[.08]`}>
                         <X className="h-4 w-4 shrink-0" aria-hidden />Remove from this position
                     </button>
@@ -135,8 +139,8 @@ function CardMenu({ name, canOpen, busy, onOpen, onAssess, onRemove }: { name: s
  * a divider and the at-a-glance row (rating, referral, resume, who moved them, days in the stage, the "…" menu). The
  * stage itself is the area the card sits in, so the card no longer repeats it.
  */
-function MemberCard({ member, stage, early, busy, onRemove, onOpen, onAssess, onDragStart }: {
-    member: PositionMember; stage: StageDef; early: boolean; busy: boolean; onRemove: (member: PositionMember) => void; onOpen: (member: PositionMember) => void; onAssess: (member: PositionMember) => void; onDragStart: (member: PositionMember) => void;
+function MemberCard({ member, stage, early, busy, onRemove, onOpen, onAssess, onNotify, onDragStart }: {
+    member: PositionMember; stage: StageDef; early: boolean; busy: boolean; onRemove: (member: PositionMember) => void; onOpen: (member: PositionMember) => void; onAssess: (member: PositionMember) => void; onNotify?: () => void; onDragStart: (member: PositionMember) => void;
 }) {
     const r = member.record;
     const name = r?.fullName ?? 'Record removed';
@@ -166,7 +170,7 @@ function MemberCard({ member, stage, early, busy, onRemove, onOpen, onAssess, on
                     {member.stageChangedByName && <span className="min-w-0 max-w-full truncate text-xs text-text-secondary" title={`Moved here by ${member.stageChangedByName}`}>{member.stageChangedByName}</span>}
                 </div>
                 <span className={`${NUM_SM} shrink-0 text-[13px] ${late ? 'text-red-700' : 'text-text-secondary'}`} title={`In this stage since ${formatDate(member.stageChangedAt)}`}>{days} d</span>
-                <CardMenu name={name} canOpen={!!r} busy={busy} onOpen={() => onOpen(member)} onAssess={() => onAssess(member)} onRemove={() => onRemove(member)} />
+                <CardMenu name={name} canOpen={!!r} busy={busy} onOpen={() => onOpen(member)} onAssess={() => onAssess(member)} onNotify={onNotify} onRemove={() => onRemove(member)} />
             </div>
         </li>
     );
@@ -196,23 +200,7 @@ export default function PipelineView({ orgId, dataVersion, onDataChanged, select
     const [nonce, setNonce] = useState(0);
     const [busy, setBusy] = useState(false);
     const [pendingMove, setPendingMove] = useState<{ member: PositionMember; stage: StageDef } | null>(null);
-    // Owner 2026-11-24: after a move to a rejected stage, the soft rejection email on offer.
-    const [rejection, setRejection] = useState<{ member: PositionMember; templateId: string; positionId: string } | null>(null);
-    const [rejecting, setRejecting] = useState(false);
-    const sendRejection = async () => {
-        if (!rejection) return;
-        setRejecting(true);
-        const res = await api<{ campaign: { counts: { sent: number; skipped: number; failed: number; unknown: number } } }>('/api/candidates/outreach/campaigns', {
-            json: { orgId, action: 'send', applicationIds: [rejection.member.applicationId ?? rejection.member.record?.id], positionId: rejection.positionId, emailTemplateId: rejection.templateId },
-        });
-        setRejecting(false);
-        if (!res.ok) { notify(res.error, 'error'); return; }
-        const c = res.data.campaign.counts;
-        notify(c.sent ? 'Rejection email sent' : 'The email was not sent. See Outreach → Sends for why.', c.sent ? 'success' : 'info');
-        setRejection(null);
-    };
-    // Owner 2026-11-16: right after a drop on a stage marked for WhatsApp (Configurations), offer to tell the candidate.
-    const [outreach, setOutreach] = useState<{ record: CandidateRecord; positionId: string; positionTitle: string; stageName: string; remark: string | null; open: boolean } | null>(null);
+    const [outreach, setOutreach] = useState<{ record: CandidateRecord; positionId: string; positionTitle: string; stage: StageDef; remark: string | null; notification: StageNotification } | null>(null);
     // Owner 2026-11-25: the position's own screening questions, drafted by the AI from its JD.
     const [questionsOpen, setQuestionsOpen] = useState(false);
     const stageList = useStages(orgId);
@@ -262,25 +250,38 @@ export default function PipelineView({ orgId, dataVersion, onDataChanged, select
     const list = members?.id === selectedId ? members.list : null;
     const refresh = () => { setNonce(n => n + 1); onDataChanged(); };
 
+    const canNotify = (member: PositionMember, stage: StageDef) =>
+        !!member.record && !member.record.blacklisted && !!stageNotification(stage, stageList?.source !== 'legacy', DEFAULT_OUTREACH.rejectionEmailTemplateId);
+
+    const notifyCandidate = async (member: PositionMember, stage: StageDef) => {
+        const record = member.record;
+        if (!position || !record || record.blacklisted) return;
+        if (stage.kind !== 'rejected') {
+            const notification = stageNotification(stage, stageList?.source !== 'legacy', null);
+            if (notification) setOutreach({ record, stage, notification, positionId: position.id, positionTitle: position.title, remark: null });
+            return;
+        }
+        const res = await api<{ settings: OutreachSettings }>(`/api/candidates/outreach/settings${qs({ orgId })}`);
+        if (!res.ok) { notify(res.error, 'error'); if (res.noAccess) reportError(res); return; }
+        const notification = stageNotification(stage, stageList?.source !== 'legacy', res.data.settings.rejectionEmailTemplateId);
+        if (!notification) { notify('No notification channel is configured for this stage.', 'info'); return; }
+        setOutreach({ record, stage, notification, positionId: position.id, positionTitle: position.title, remark: null });
+    };
+
     const move = async (member: PositionMember, stageKey: Stage, remark: string | null = null) => {
         const stage = findStage(stageList?.stages ?? [], stageKey);
         if (!stage || stageKey === member.stage || !position) return;
         // Owner 2026-11-21 (spec): a reason to reject or to move back a round, as for a stage that needs a remark.
         if ((stage.needsRemark || reasonNeeded(stageList?.stages ?? [], member.stage, stageKey)) && !remark) { setPendingMove({ member, stage }); return; }
         setBusy(true);
-        const res = await api<{ member: PositionMember; screening?: { status: string; note: string | null } | null; rejectionEmail?: { templateId: string } | null }>(`/api/candidates/positions/${encodeURIComponent(position.id)}/members/${encodeURIComponent(member.id)}`, { method: 'PATCH', json: { orgId, stage: stageKey, ...(remark ? { remark } : {}) } });
+        const res = await api<{ member: PositionMember; screening?: { status: string; note: string | null } | null; notification?: StageNotification | null }>(`/api/candidates/positions/${encodeURIComponent(position.id)}/members/${encodeURIComponent(member.id)}`, { method: 'PATCH', json: { orgId, stage: stageKey, ...(remark ? { remark } : {}) } });
         setBusy(false);
         if (!res.ok) { notify(res.error, 'error'); if (res.noAccess) reportError(res); return; }
         setPendingMove(null);
         notify(`${member.record?.fullName ?? 'Candidate'} → ${stage.name}`, 'success');
         refresh();
-        // Owner 2026-11-24: a rejected stage offers the soft rejection email (HR's template, from the connected mailbox).
-        if (res.data.rejectionEmail && member.record && !member.record.blacklisted && member.record.email) {
-            setRejection({ member, templateId: res.data.rejectionEmail.templateId, positionId: position.id });
-        }
-        // The editable update needs the stages migration (stage_update); before it, nothing is offered.
-        if (stage.whatsapp && member.record && !member.record.blacklisted && stageList?.source !== 'legacy') {
-            setOutreach({ record: member.record, positionId: position.id, positionTitle: position.title, stageName: stage.name, remark, open: true });
+        if (res.data.notification && member.record && !member.record.blacklisted) {
+            setOutreach({ record: member.record, positionId: position.id, positionTitle: position.title, stage, remark, notification: res.data.notification });
         }
     };
     const remove = async (member: PositionMember) => {
@@ -337,7 +338,10 @@ export default function PipelineView({ orgId, dataVersion, onDataChanged, select
         // Opens the person's panel on Assignment & documents, where an assessment is sent.
         onAssess: (m: PositionMember) => { openMember(m, inStage(m.stage).map(x => x.id), stageOf(m).name); setShowTab(t => ({ tab: 'work', nonce: (t?.nonce ?? 0) + 1 })); },
     };
-    const card = (m: PositionMember) => <MemberCard key={m.id} member={m} stage={stageOf(m)} early={isEarly(m)} {...cardProps} />;
+    const card = (m: PositionMember) => {
+        const stage = stageOf(m);
+        return <MemberCard key={m.id} member={m} stage={stage} early={isEarly(m)} {...cardProps} onNotify={canNotify(m, stage) ? () => void notifyCandidate(m, stage) : undefined} />;
+    };
     const groups = stageGroups(listed);
 
     // The panel's place in the pipeline: the person as the board has them now, and the neighbours still there.
@@ -372,19 +376,8 @@ export default function PipelineView({ orgId, dataVersion, onDataChanged, select
                 onClose={() => { if (!busy) setPendingMove(null); }}
                 onSubmit={remark => { if (pendingMove) void move(pendingMove.member, pendingMove.stage.key, remark); }}
             />
-            <Dialog open={!!rejection} onClose={() => { if (!rejecting) setRejection(null); }} labelId="reject-email-title" size="sm"
-                title={`Send ${rejection?.member.record?.fullName ?? 'them'} the rejection email?`}
-                description="A polite note from the HR mailbox (Outreach → Templates → Soft rejection). Nothing is sent unless you press Send."
-                footer={<>
-                    <button type="button" onClick={() => setRejection(null)} disabled={rejecting} className={BTN_GHOST}>Not now</button>
-                    <button type="button" onClick={() => void sendRejection()} disabled={rejecting} className={BTN_PRIMARY}>{rejecting && <Spinner />}Send the email</button>
-                </>} />
-            <OutreachDialog
-                orgId={orgId} open={!!outreach?.open} record={outreach?.record ?? null}
-                positionId={outreach?.positionId ?? null} positionTitle={outreach?.positionTitle ?? null} stageName={outreach?.stageName ?? ''} movedRemark={outreach?.remark ?? null}
-                onClose={() => setOutreach(o => (o ? { ...o, open: false } : o))}
-                onSent={() => { setOutreach(o => (o ? { ...o, open: false } : o)); refresh(); }}
-            />
+            {outreach && <OutreachDialog orgId={orgId} {...outreach} onClose={() => setOutreach(null)}
+                onSent={() => { setOutreach(null); refresh(); }} />}
 
             {/* Position row */}
             <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
@@ -425,7 +418,7 @@ export default function PipelineView({ orgId, dataVersion, onDataChanged, select
             ) : positions === null || (positions.length > 0 && !stageList) ? (
                 <p className="flex items-center gap-x-2 text-sm text-text-tertiary"><Spinner className="h-3.5 w-3.5" />Loading</p>
             ) : !position ? (
-                <div className={CARD}><EmptyState icon={FileText} title="No positions yet">Save a job description as a position from Search or the Positions tab, then tick candidates in the results and add them to it.</EmptyState></div>
+                <div className={CARD}><EmptyState icon={FileText} title="No positions yet">Save a job description as a position from Search or the Positions tab, then open candidates from the results to add them to the position.</EmptyState></div>
             ) : (
                 <>
                     <section className="recruitment-hero" aria-label="Role brief">
@@ -554,7 +547,10 @@ export default function PipelineView({ orgId, dataVersion, onDataChanged, select
                                                 <td className={`${NUM_SM} px-3 py-2 text-right text-text-primary`}>{daysSince(m.stageChangedAt)}</td>
                                                 <td className="px-3 py-2 text-text-secondary">{m.stageChangedByName ?? ''}</td>
                                                 <td className="max-w-[320px] truncate px-3 py-2 italic text-text-secondary" title={m.remark ?? ''}>{m.remark ?? ''}</td>
-                                                <td className="px-3 py-2 text-right"><button type="button" onClick={() => void remove(m)} disabled={busy} className={BTN_GHOST}>Remove</button></td>
+                                                <td className="px-3 py-2 text-right">
+                                                    {canNotify(m, stageOf(m)) && <button type="button" onClick={() => void notifyCandidate(m, stageOf(m))} disabled={busy} className={BTN_GHOST}>Notify candidate</button>}
+                                                    <button type="button" onClick={() => void remove(m)} disabled={busy} className={BTN_GHOST}>Remove</button>
+                                                </td>
                                             </tr>
                                         );
                                     })}

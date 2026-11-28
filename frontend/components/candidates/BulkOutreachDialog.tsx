@@ -8,19 +8,12 @@ import { formatCount } from './format';
 import { useOutreachChoices } from './OutreachView';
 import { BTN_GHOST, BTN_PRIMARY, BTN_SECONDARY, Dialog, INPUT, LABEL, Spinner, useUi, WELL } from './ui';
 
-/**
- * Bulk WhatsApp and email (owner 2026-11-24, 23 Nov meeting: "bulk WhatsApp and email sending is needed, with separate
- * templates for each channel"). Opened from Search's bar with the ticked candidates. HR picks the position (the role,
- * location and application link in the message), the channel(s) and templates, previews the first person's message,
- * and sends. The send goes in batches; this dialog keeps asking for the next batch while it is open, and the hourly job
- * finishes anything left. The results are under Recruitment → Outreach → Sends.
- */
 export default function BulkOutreachDialog({ orgId, applicationIds, open, onClose }: { orgId: string; applicationIds: string[]; open: boolean; onClose: () => void }) {
     const { notify } = useUi();
     const { state, error } = useOutreachChoices(orgId, open);
     const [positionId, setPositionId] = useState('');
-    const [waId, setWaId] = useState<string>('');
-    const [emId, setEmId] = useState<string>('');
+    const [whatsapp, setWhatsapp] = useState(false);
+    const [email, setEmail] = useState(false);
     const [mailbox, setMailbox] = useState('');
     const [preview, setPreview] = useState<{ whatsapp: string | null; email: { subject: string; body: string } | null; gaps: string[] } | null>(null);
     const [busy, setBusy] = useState<'preview' | 'send' | null>(null);
@@ -28,15 +21,16 @@ export default function BulkOutreachDialog({ orgId, applicationIds, open, onClos
     const [seenOpen, setSeenOpen] = useState(open);
     if (open !== seenOpen) {
         setSeenOpen(open);
-        if (open) { setPreview(null); setProgress(null); }
+        if (open) { setPreview(null); setProgress(null); setWhatsapp(false); setEmail(false); setPositionId(''); setMailbox(''); }
     }
-    const wa = state?.settings.templates.filter(t => t.channel === 'whatsapp') ?? [];
-    const em = state?.settings.templates.filter(t => t.channel === 'email') ?? [];
-    const chosenWa = waId === '' ? (wa[0]?.id ?? '') : waId === 'none' ? '' : waId;
-    const chosenEm = emId === 'none' ? '' : emId;
+    const wa = state?.settings.templates.find(t => t.id === 'wa_job_opening' && t.channel === 'whatsapp');
+    const em = state?.settings.templates.find(t => t.id === 'email_job_opening' && t.channel === 'email');
+    const chosenWa = whatsapp ? wa?.id : null;
+    const chosenEm = email ? em?.id : null;
     const chosenMailbox = mailbox || state?.mailboxes[0]?.id || '';
     const body = { orgId, applicationIds, positionId: positionId || null, whatsappTemplateId: chosenWa || null, emailTemplateId: chosenEm || null, mailConnectionId: chosenEm ? chosenMailbox || null : null };
-    const nothing = !chosenWa && !chosenEm;
+    const position = state?.positions.find(p => p.id === positionId);
+    const ready = !!position?.location?.trim() && (!whatsapp || !!wa) && (!email || !!em) && (whatsapp || email);
     const needsMailbox = !!chosenEm && !state?.mailboxes.length;
 
     const doPreview = async () => {
@@ -72,8 +66,8 @@ export default function BulkOutreachDialog({ orgId, applicationIds, open, onClos
             description="Each person gets their own copy, and their own application form link. Blacklisted people and anyone without a valid number or email are skipped."
             footer={progress ? <button type="button" onClick={onClose} disabled={busy === 'send'} className={BTN_PRIMARY}>{busy === 'send' ? <><Spinner />Sending…</> : 'Close'}</button> : <>
                 <button type="button" onClick={onClose} className={BTN_GHOST}>Cancel</button>
-                <button type="button" onClick={() => void doPreview()} disabled={!!busy || nothing || !state} className={BTN_SECONDARY}>{busy === 'preview' ? <Spinner /> : <Eye className="h-4 w-4" />}Preview</button>
-                <button type="button" onClick={() => void send()} disabled={!!busy || nothing || needsMailbox || !preview} title={preview ? undefined : 'Preview first'} className={BTN_PRIMARY}><Send className="h-4 w-4" />Send to {people}</button>
+                <button type="button" onClick={() => void doPreview()} disabled={!!busy || !ready} className={BTN_SECONDARY}>{busy === 'preview' ? <Spinner /> : <Eye className="h-4 w-4" />}Preview</button>
+                <button type="button" onClick={() => void send()} disabled={!!busy || !ready || needsMailbox} className={BTN_PRIMARY}><Send className="h-4 w-4" />Send to {people}</button>
             </>}>
             {error && <p className="text-sm text-error">{error}</p>}
             {!state && !error && <p className="flex items-center gap-2 text-sm text-text-tertiary"><Spinner className="h-3.5 w-3.5" />Loading</p>}
@@ -81,24 +75,23 @@ export default function BulkOutreachDialog({ orgId, applicationIds, open, onClos
                 <div className="space-y-4">
                     <label className="block"><span className={LABEL}>Position (the role, location and application link in the message)</span>
                         <select value={positionId} onChange={e => { setPositionId(e.target.value); setPreview(null); }} className={`${INPUT} mt-1`}>
-                            <option value="">No position</option>
+                            <option value="">Choose a position</option>
                             {state.positions.map(p => <option key={p.id} value={p.id}>{p.title}{p.location ? ` · ${p.location}` : ''}</option>)}
                         </select>
                     </label>
-                    <div className="grid gap-3 sm:grid-cols-2">
-                        <label className="block"><span className={LABEL}>WhatsApp</span>
-                            <select value={waId === '' ? chosenWa : waId} onChange={e => { setWaId(e.target.value); setPreview(null); }} className={`${INPUT} mt-1`}>
-                                <option value="none">Don&apos;t send on WhatsApp</option>
-                                {wa.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
-                            </select>
-                        </label>
-                        <label className="block"><span className={LABEL}>Email</span>
-                            <select value={emId === '' ? 'none' : emId} onChange={e => { setEmId(e.target.value); setPreview(null); }} className={`${INPUT} mt-1`}>
-                                <option value="none">Don&apos;t send an email</option>
-                                {em.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
-                            </select>
-                        </label>
-                    </div>
+                    {position && !position.location?.trim() && <p role="status" className="text-sm text-warning">Add a location to this position before sending.</p>}
+                    <fieldset>
+                        <legend className={LABEL}>Job opening with application link</legend>
+                        <div className="mt-2 grid gap-3 sm:grid-cols-2">
+                            <label className={`${WELL} flex items-center gap-2 p-3 text-sm font-medium`}>
+                                <input type="checkbox" checked={whatsapp} disabled={!wa || !!busy} className="accent-primary" onChange={e => { setWhatsapp(e.target.checked); setPreview(null); }} />WhatsApp
+                            </label>
+                            <label className={`${WELL} flex items-center gap-2 p-3 text-sm font-medium`}>
+                                <input type="checkbox" checked={email} disabled={!em || !!busy} className="accent-primary" onChange={e => { setEmail(e.target.checked); setPreview(null); }} />Email
+                            </label>
+                        </div>
+                    </fieldset>
+                    {(!wa || !em) && <p role="status" className="text-sm text-warning">A job-opening template is missing. Check Outreach → Templates.</p>}
                     {chosenEm && (state.mailboxes.length > 1
                         ? <label className="block"><span className={LABEL}>Send from</span><select value={chosenMailbox} onChange={e => setMailbox(e.target.value)} className={`${INPUT} mt-1`}>{state.mailboxes.map(b => <option key={b.id} value={b.id}>{b.address}</option>)}</select></label>
                         : state.mailboxes.length === 1 ? <p className="text-xs text-text-secondary">Sent from {state.mailboxes[0].address}.</p>

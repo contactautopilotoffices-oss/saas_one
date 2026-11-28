@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
 import { DocumentError, extractText, isSupportedFile } from "../../backend/lib/hr-assistant/extract-text";
+import { readRequisitionJd } from "../../app/api/recruitment/requisitions/_lib/form";
 
 const encode = (text: string) => new TextEncoder().encode(text);
 
@@ -27,6 +28,15 @@ describe("extractText", () => {
   it("reads PDFs", async () => {
     const text = await extractText(encode(MINIMAL_PDF), "policy.pdf");
     assert.match(text, /20 days of paid leave/);
+  });
+
+  it("validates a hiring request PDF and keeps its original bytes alongside the extracted text", async () => {
+    const pdf = new File([MINIMAL_PDF], "JD.pdf", { type: "application/pdf" });
+    const jd = await readRequisitionJd(pdf);
+    assert.equal(jd?.fileName, "JD.pdf");
+    assert.equal(jd?.pdfBase64, Buffer.from(MINIMAL_PDF).toString("base64"));
+    assert.match(jd?.text ?? "", /20 days of paid leave/);
+    await assert.rejects(readRequisitionJd(new File(["not a PDF"], "JD.pdf")), /valid job description PDF/);
   });
 
   it("rejects unreadable PDFs and Word files with a user-facing error", async () => {

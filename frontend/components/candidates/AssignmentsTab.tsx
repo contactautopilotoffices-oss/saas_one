@@ -9,7 +9,7 @@ import type { ScreeningView } from '@/backend/lib/candidates/screening';
 import type { CandidateRecord } from '@/backend/lib/candidates/types';
 import { api, qs } from './api';
 import { formatDate } from './format';
-import { BTN_GHOST, BTN_PRIMARY, BTN_SECONDARY, Dialog, INPUT, LABEL, Spinner, Tag, useUi, WELL } from './ui';
+import { BTN_GHOST, BTN_PRIMARY, BTN_SECONDARY, CopyButton, Dialog, INPUT, LABEL, Spinner, Tag, useUi, WELL } from './ui';
 
 /*
  * The assignment stage and the documents (owner 2026-11-24, 23 Nov HR meeting). HR sends an assignment (from the
@@ -22,7 +22,7 @@ const STATUS: Record<AssignmentView['status'], { label: string; tone: 'info' | '
     sent: { label: 'Waiting', tone: 'info' }, submitted: { label: 'Submitted', tone: 'success' }, cancelled: { label: 'Cancelled', tone: 'neutral' },
 };
 const DOC: Record<DocumentView['status'], { label: string; tone: 'info' | 'success' | 'warn' }> = {
-    uploaded: { label: 'To check', tone: 'info' }, verified: { label: 'Verified', tone: 'success' }, rejected: { label: 'Rejected', tone: 'warn' },
+    uploaded: { label: 'To check', tone: 'info' }, verified: { label: 'Verified', tone: 'success' }, rejected: { label: 'Changes requested', tone: 'warn' },
 };
 const scoreTone = (n: number) => (n >= 80 ? 'text-success' : n >= 60 ? 'text-text-primary' : n >= 40 ? 'text-warning' : 'text-danger');
 const inDays = (d: number) => { const t = new Date(Date.now() + d * 86_400_000); t.setHours(18, 0, 0, 0); return new Date(t.getTime() - t.getTimezoneOffset() * 60_000).toISOString().slice(0, 16); };
@@ -35,7 +35,8 @@ export default function AssignmentsTab({ orgId, record, onChanged }: { orgId: st
     const [nonce, setNonce] = useState(0);
     const [composing, setComposing] = useState(false);
     const [busy, setBusy] = useState<string | null>(null);
-    const [rejecting, setRejecting] = useState<{ id: string; note: string } | null>(null);
+    const [rejecting, setRejecting] = useState<{ doc: DocumentView; note: string } | null>(null);
+    const [documentLink, setDocumentLink] = useState<string | null>(null);
 
     useEffect(() => {
         const ctrl = new AbortController();
@@ -70,14 +71,19 @@ export default function AssignmentsTab({ orgId, record, onChanged }: { orgId: st
         const r = await act(`link-${id}`, { action: 'link', id });
         if (r?.url) { await navigator.clipboard.writeText(r.url).catch(() => undefined); notify('The candidate\'s link is copied', 'success'); }
     };
+    const showDelivery = (delivery: { url?: string; sent?: boolean; note?: string | null }, success: string) => {
+        if (delivery.url) setDocumentLink(delivery.url);
+        notify(delivery.sent ? success : delivery.note ?? 'The link is ready to share with the candidate.', delivery.sent ? 'success' : 'info');
+    };
     const askDocuments = async () => {
         const r = await act('docs', { action: 'request_documents', applicationId: record.id, positionId: positions[0]?.positionId ?? null });
-        if (!r) return;
-        if (r.sent) notify('Documents link sent on WhatsApp', 'success');
-        else {
-            if (r.url) await navigator.clipboard.writeText(r.url).catch(() => undefined);
-            notify(`${r.note ?? 'The WhatsApp did not go.'} The link is copied: share it yourself.`, 'info');
-        }
+        if (r) showDelivery(r, 'Documents link sent on WhatsApp');
+    };
+    const askForChanges = async () => {
+        if (!rejecting || busy) return;
+        const { doc, note } = rejecting;
+        const res = await act(`r-${doc.id}`, { action: 'review_document', id: doc.id, status: 'rejected', note, uploadedAt: doc.uploadedAt });
+        if (res) { setRejecting(null); showDelivery(res, 'Changes requested. The same link was sent on WhatsApp.'); }
     };
 
     if (!d) return <div className="flex justify-center py-8"><Spinner /></div>;
@@ -143,26 +149,30 @@ export default function AssignmentsTab({ orgId, record, onChanged }: { orgId: st
                     <button type="button" onClick={() => void askDocuments()} disabled={busy === 'docs'} className={`${BTN_SECONDARY} ml-auto h-8`}>{busy === 'docs' ? <Spinner /> : <Send className="h-3.5 w-3.5" />}Ask for documents</button>
                 </div>
                 {settings && <p className="text-xs text-text-tertiary">Asks for: {settings.documents.items.join(', ')}. Change the list in Recruitment → Outreach → Documents.</p>}
+                {documentLink && <div className="flex items-center gap-2 text-xs text-text-secondary">
+                    <span>Candidate’s documents link</span><CopyButton value={documentLink} label="documents link" />
+                </div>}
                 {!d.documents.length && <p className="text-sm text-text-secondary">Nothing uploaded yet.</p>}
                 {d.documents.map(doc => (
                     <div key={doc.id} className="flex flex-wrap items-center gap-2 rounded-lg border border-border px-3 py-2 text-sm">
                         <span className="font-semibold text-text-primary">{doc.item}</span>
                         <Tag tone={DOC[doc.status].tone}>{DOC[doc.status].label}</Tag>
-                        <span className="text-xs text-text-tertiary">{formatDate(doc.uploadedAt)}{doc.reviewedBy ? ` · ${doc.reviewedBy}` : ''}</span>
+                        <span className="text-xs text-text-tertiary">{doc.fileName ? `${doc.fileName} · ` : ''}{formatDate(doc.uploadedAt)}{doc.reviewedBy ? ` · ${doc.reviewedBy}` : ''}</span>
                         {doc.reviewNote && <span className="w-full text-xs text-text-secondary">{doc.reviewNote}</span>}
                         <div className="ml-auto flex gap-1">
                             <button type="button" onClick={() => void open(`doc-${doc.id}`, { action: 'document_file', id: doc.id })} className={`${BTN_GHOST} h-7`}>{busy === `doc-${doc.id}` ? <Spinner /> : null}Open</button>
-                            {doc.status !== 'verified' && <button type="button" onClick={() => void act(`v-${doc.id}`, { action: 'review_document', id: doc.id, status: 'verified' }, 'Marked verified')} className={`${BTN_GHOST} h-7`}>Verify</button>}
-                            {doc.status !== 'rejected' && <button type="button" onClick={() => setRejecting({ id: doc.id, note: '' })} className={`${BTN_GHOST} h-7`}>Reject</button>}
+                            {doc.status !== 'verified' && <button type="button" onClick={() => void act(`v-${doc.id}`, { action: 'review_document', id: doc.id, status: 'verified', uploadedAt: doc.uploadedAt }, 'Marked verified')} className={`${BTN_GHOST} h-7`}>Verify</button>}
+                            {doc.status !== 'rejected' && <button type="button" onClick={() => setRejecting({ doc, note: '' })} className={`${BTN_GHOST} h-7`}>Request changes</button>}
                         </div>
                     </div>
                 ))}
             </section>
 
             {composing && settings && <AssignmentComposer orgId={orgId} record={record} positions={positions} settings={settings} onClose={() => setComposing(false)} onSent={() => { setComposing(false); setNonce(n => n + 1); onChanged?.(); }} />}
-            <Dialog open={Boolean(rejecting)} onClose={() => setRejecting(null)} title="Reject this document" labelId="reject-doc" size="sm"
-                footer={<button type="button" disabled={!rejecting?.note.trim()} onClick={() => { if (rejecting) void act(`r-${rejecting.id}`, { action: 'review_document', id: rejecting.id, status: 'rejected', note: rejecting.note }, 'Marked rejected').then(() => setRejecting(null)); }} className={BTN_PRIMARY}>Reject</button>}>
-                <label className={LABEL} htmlFor="reject-note">Why (the candidate will need to upload it again)</label>
+            <Dialog open={Boolean(rejecting)} onClose={() => { if (!busy) setRejecting(null); }} title="Request document changes" labelId="reject-doc" size="sm"
+                description="The candidate can see this note and replace the file using their documents link."
+                footer={<button type="button" disabled={!!busy || !rejecting?.note.trim()} onClick={() => void askForChanges()} className={BTN_PRIMARY}>{busy && <Spinner />}Request changes</button>}>
+                <label className={LABEL} htmlFor="reject-note">What should the candidate change?</label>
                 <textarea id="reject-note" rows={3} className={`${INPUT} mt-1`} value={rejecting?.note ?? ''} onChange={e => setRejecting(r => (r ? { ...r, note: e.target.value } : r))} maxLength={500} />
             </Dialog>
         </div>

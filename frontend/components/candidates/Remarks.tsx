@@ -1,5 +1,6 @@
 'use client';
 
+import type { RemarkBullet } from '@/backend/lib/candidates/remark-format';
 import React, { useEffect, useRef, useState } from 'react';
 import { Ban, MessageSquareText, ShieldOff } from 'lucide-react';
 import type { CandidateAction } from '@/backend/lib/candidates/actions';
@@ -248,12 +249,72 @@ const NOTE_LABEL: Record<string, string> = { interview: 'Interview scheduled', f
 /** The entry's heading: an interview or feedback note reads as such, not as "Remark". */
 const labelOf = (a: CandidateAction) => (a.action === 'remark' && typeof a.meta.kind === 'string' && a.meta.kind in NOTE_LABEL ? NOTE_LABEL[a.meta.kind] : ACTION_LABEL[a.action] ?? a.action);
 
+export function CandidateRemarks({ orgId, record, nonce, onAdd }: { orgId: string; record: CandidateRecord; nonce: number; onAdd: () => void }) {
+    const { notify } = useUi();
+    const [state, setState] = useState<{ id: string; remarks: CandidateAction[] } | null>(null);
+    const [formatted, setFormatted] = useState<Record<string, RemarkBullet[]>>({});
+    const [busy, setBusy] = useState<string | null>(null);
+    const path = `/api/candidates/${encodeURIComponent(record.id)}/actions`;
+    useEffect(() => {
+        const ctrl = new AbortController();
+        void api<{ actions: CandidateAction[] }>(`${path}${qs({ orgId })}`, { signal: ctrl.signal }).then(res => {
+            if (!ctrl.signal.aborted && res.ok) setState({ id: path, remarks: res.data.actions.filter(a => a.action === 'remark' && ((!a.toValue && !a.meta.kind && a.remark) || a.meta.kind === 'feedback' || a.meta.kind === 'scorecard')) });
+        });
+        return () => ctrl.abort();
+    }, [orgId, path, nonce]);
+
+    const format = async (id: string) => {
+        setBusy(id);
+        const res = await api<{ bullets: RemarkBullet[] }>(path, { json: { orgId, formatRemarkId: id } });
+        setBusy(null);
+        if (!res.ok || !res.data.bullets.length) { notify(res.ok ? 'AI formatting is unavailable. The original remark is shown.' : res.error, 'info'); return; }
+        setFormatted(all => ({ ...all, [id]: res.data.bullets }));
+    };
+
+    const remarks = state?.id === path ? state.remarks : [];
+    return (
+        <section aria-label="Candidate remarks" className="py-4">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+                <h3 className="text-sm font-semibold text-text-primary">Remarks</h3>
+                <button type="button" onClick={onAdd} className="text-xs font-semibold text-primary underline-offset-2 hover:underline">Add remark</button>
+            </div>
+            {remarks.length === 0 && record.remark && <p className="mt-2 whitespace-pre-wrap break-words text-sm text-text-primary">{record.remark}</p>}
+            {remarks.length === 0 && !record.remark && state && <p className="mt-2 text-xs text-text-tertiary">No remarks yet.</p>}
+            {remarks.length > 0 && (
+                <div className="mt-2 space-y-2">
+                    {remarks.slice(0, 4).map(note => {
+                        const stored = Array.isArray(note.meta.bullets) ? note.meta.bullets as RemarkBullet[] : [];
+                        const bullets = formatted[note.id] ?? stored;
+                        const feedback = note.meta.kind === 'feedback' || note.meta.kind === 'scorecard';
+                        const round = typeof note.meta.round === 'string' ? note.meta.round : null;
+                        const rating = typeof note.meta.rating === 'number' ? `${note.meta.rating}/5` : null;
+                        const recommendation = typeof note.meta.recommendation === 'string' ? note.meta.recommendation.replace(/_/g, ' ') : null;
+                        return <div key={note.id} className="rounded-lg bg-surface-elevated px-3 py-2">
+                            <p className="mb-1 text-xs text-text-secondary">{[note.byName, formatDate(note.at)].filter(Boolean).join(' · ')}</p>
+                            {feedback && <p className="mb-1 break-words text-xs font-semibold text-text-primary">
+                                {round ? [note.meta.kind === 'scorecard' ? 'Scorecard' : 'Feedback', round, rating, recommendation].filter(Boolean).join(' · ') : note.toValue || 'Interview feedback'}
+                            </p>}
+                            {bullets.length ? <ul className="list-disc space-y-1 pl-4 text-[13px] text-text-primary">
+                                {bullets.map((bullet, i) => <li key={i} className="break-words"><strong>{bullet.label}:</strong> {bullet.value}</li>)}
+                            </ul> : <>
+                                <p className="whitespace-pre-wrap break-words text-[13px] text-text-primary">{note.remark}</p>
+                                {!feedback && <button type="button" disabled={!!busy} onClick={() => void format(note.id)} className="mt-1 text-xs font-semibold text-primary underline-offset-2 hover:underline">{busy === note.id ? 'Formatting…' : 'Format with AI'}</button>}
+                            </>}
+                        </div>;
+                    })}
+                </div>
+            )}
+            {remarks.length > 4 && <p className="mt-2 text-xs text-text-tertiary">See earlier remarks in Activity.</p>}
+        </section>
+    );
+}
+
 /**
  * The candidate's history with an "Add remark" box (owner 2026-11-15). Reads /api/candidates/[id]/actions; shows a
  * short note when the database update is not applied yet (the list comes back empty then).
  */
-export function ActivityTimeline({ orgId, record, nonce = 0, focusNonce = 0, position = null }: {
-    orgId: string; record: CandidateRecord; nonce?: number; focusNonce?: number;
+export function ActivityTimeline({ orgId, record, nonce = 0, focusNonce = 0, position = null, onAdded }: {
+    orgId: string; record: CandidateRecord; nonce?: number; focusNonce?: number; onAdded?: () => void;
     /** Opened from the pipeline (owner 2026-11-17): this position's entries first, "Everything" shows the rest. */
     position?: { id: string; title: string } | null;
 }) {
@@ -290,6 +351,7 @@ export function ActivityTimeline({ orgId, record, nonce = 0, focusNonce = 0, pos
         if (!res.ok) { notify(res.error, 'error'); if (res.noAccess) reportError(res); return; }
         setText('');
         setState({ id: record.id, actions: res.data.actions });
+        onAdded?.();
     };
 
     return (

@@ -62,7 +62,7 @@ export function CandidateOffers({ orgId, record, interviews }: { orgId: string; 
                 const rounds = interviews.filter(i => i.positionId === positionId && i.status !== 'cancelled' && i.status !== 'no_show');
                 const eligible = rounds.length > 0 && rounds.every(i => i.status === 'done');
                 const avg = cards.length ? Math.round((cards.reduce((n, c) => n + (c.overall ?? 0), 0) / cards.length) * 10) / 10 : null;
-                const live = offers?.some(o => o.positionId === positionId && ['pending', 'approved', 'released', 'accepted'].includes(o.status));
+                const live = offers?.some(o => o.positionId === positionId && ['pending', 'approved', 'released', 'accepted', 'rejected'].includes(o.status));
                 return (
                     <div key={positionId} className={`${K_WELL} mt-2 px-3 py-2.5`}>
                         <p className="text-sm font-semibold text-text-primary">{title}</p>
@@ -157,6 +157,21 @@ function OfferCard({ orgId, offer: o, onChanged, compact = false }: { orgId: str
     const [text, setText] = useState('');
     const [date, setDate] = useState(o.joiningDate ?? '');
     const [letter, setLetter] = useState(o.letter ?? '');
+    const [letterPdf, setLetterPdf] = useState<File | null>(null);
+    const letterPath = `/api/candidates/offers/${encodeURIComponent(o.id)}${qs({ orgId })}`;
+    const uploadLetter = async () => {
+        if (!letterPdf || busy) return;
+        if (!/\.pdf$/i.test(letterPdf.name) || letterPdf.size > 4 * 1024 * 1024) { notify('Choose a PDF up to 4 MB.', 'error'); return; }
+        setBusy(true);
+        const form = new FormData();
+        form.set('file', letterPdf);
+        const res = await api<{ offer: Offer }>(letterPath, { method: 'POST', form });
+        setBusy(false);
+        if (!res.ok) { notify(res.error, 'error'); return; }
+        setLetterPdf(null);
+        notify('Offer letter PDF attached', 'success');
+        onChanged();
+    };
     const act = async (json: Record<string, unknown>, done: string) => {
         setBusy(true);
         const res = await api<{ offer: Offer }>(`/api/candidates/offers/${encodeURIComponent(o.id)}`, { method: 'PATCH', json: { orgId, ...json } });
@@ -210,8 +225,17 @@ function OfferCard({ orgId, offer: o, onChanged, compact = false }: { orgId: str
             {step === 'reject' && box('Reason', true, () => void act({ action: 'decide', approvalRevision: o.approvalRevision, expectedLevel: o.currentLevel, decision: 'reject', reason: text }, 'Rejected'), 'Reject', true)}
             {step === 'revise' && box('What to revise', true, () => void act({ action: 'decide', approvalRevision: o.approvalRevision, expectedLevel: o.currentLevel, decision: 'revise', reason: text }, 'Sent back to revise'), 'Send back')}
 
+            {o.status === 'rejected' && !step && <button type="button" onClick={() => setBreakupOpen(true)} className={K_BTN_PRIMARY}>Revise offer</button>}
+            {o.letterFileName && <a className="inline-block max-w-full break-all text-sm font-medium text-primary underline-offset-2 hover:underline" href={letterPath}>{o.letterFileName}</a>}
+
             {o.status === 'approved' && !step && (
                 <div className="mt-2 space-y-2">
+                    <div className={`${K_WELL} flex flex-wrap items-end gap-2 px-3 py-2.5`}>
+                        <label className="min-w-0 flex-1 text-sm font-medium text-text-primary">Offer letter PDF
+                            <input key={o.letterFileName ?? 'no-pdf'} type="file" accept="application/pdf,.pdf" disabled={busy} onChange={e => setLetterPdf(e.target.files?.[0] ?? null)} className="mt-1 block w-full rounded-md border border-border p-1.5 text-xs file:mr-2 file:rounded-md file:border-0 file:bg-surface-elevated file:px-2 file:py-1" />
+                        </label>
+                        <button type="button" onClick={() => void uploadLetter()} className={K_BTN} disabled={busy || !letterPdf}>{o.letterFileName ? 'Replace PDF' : 'Attach PDF'}</button>
+                    </div>
                     {o.letterGaps.length > 0 && <p role="status" className="text-xs font-medium text-red-700 dark:text-red-400">The letter has blanks to fill before release: {o.letterGaps.join(', ')}.</p>}
                     <div className="flex flex-wrap gap-2">
                         <button type="button" onClick={() => { setLetter(o.letter ?? ''); setDate(o.joiningDate ?? ''); setStep('letter'); }} className={K_BTN}>Check the letter</button>
@@ -264,6 +288,9 @@ function BreakupEditor({ orgId, offer, onClose, onSaved }: { orgId: string; offe
     const [cfg, setCfg] = useState<OutreachSettings['offer'] | null>(null);
     const [values, setValues] = useState<Record<string, string>>(() => Object.fromEntries(Object.entries(offer.breakup ?? {}).map(([k, v]) => [k, String(v)])));
     const [ctc, setCtc] = useState(String(offer.proposedCtc / 100_000));
+    const revising = offer.status === 'rejected';
+    const [joining, setJoining] = useState(offer.joiningDate ?? '');
+    const [note, setNote] = useState(offer.selectedNote ?? '');
     const [busy, setBusy] = useState(false);
     useEffect(() => {
         const ctrl = new AbortController();
@@ -281,7 +308,7 @@ function BreakupEditor({ orgId, offer, onClose, onSaved }: { orgId: string; offe
         const proposedCtc = Math.round(Number(ctc) * 100_000);
         if (!(proposedCtc > 0)) { notify('Give the CTC in lakhs per year.', 'error'); return; }
         setBusy(true);
-        const res = await api<{ offer: Offer }>(`/api/candidates/offers/${encodeURIComponent(offer.id)}`, { method: 'PATCH', json: { orgId, action: 'breakup', breakup, proposedCtc } });
+        const res = await api<{ offer: Offer }>(`/api/candidates/offers/${encodeURIComponent(offer.id)}`, { method: 'PATCH', json: { orgId, action: revising ? 'revise_offer' : 'breakup', breakup, proposedCtc, approvalRevision: offer.approvalRevision, ...(revising ? { joiningDate: joining || null, note } : {}) } });
         setBusy(false);
         if (!res.ok) { notify(res.error, 'error'); return; }
         notify(`Saved. Approval starts again with ${res.data.offer.currentApproverName ?? 'the first approver'}.`, 'success');
@@ -292,12 +319,17 @@ function BreakupEditor({ orgId, offer, onClose, onSaved }: { orgId: string; offe
             <input type="number" min={0} step={100} value={values[k] ?? ''} onChange={e => setValues(v => ({ ...v, [k]: e.target.value }))} className={`${K_FIELD} w-36 text-right`} /></label>
     );
     return (
-        <Dialog open onClose={onClose} title={`Salary breakup: ${offer.candidateName}`} labelId={`breakup-${offer.id}`} size="lg"
-            description="In rupees: earnings and deductions per month, benefits per year. The hiring manager, the HR Head and the Director approve it before the candidate sees it; saving a change starts the approval again."
+        <Dialog open onClose={onClose} title={`${revising ? 'Revise offer' : 'Salary breakup'} · ${offer.candidateName}`} labelId={`breakup-${offer.id}`} size="lg"
+            description={revising ? 'Review the comments, make your changes and send this offer through its approval chain again.' : 'Enter monthly earnings and deductions and annual benefits in rupees. Saving sends the updated offer for approval.'}
             footer={<button type="button" onClick={() => void save()} disabled={busy || !cfg} className={K_BTN_PRIMARY}>{busy && <Spinner />}Save and send for approval</button>}>
             {!cfg ? <div className="flex justify-center py-6"><Spinner /></div> : (
                 <div className="space-y-4">
                     <label className="block text-sm"><span className={K_LABEL}>Offer CTC (lakhs per year)</span><input type="number" min={0} step={0.1} value={ctc} onChange={e => setCtc(e.target.value)} className={`${INPUT} mt-1 sm:max-w-[200px]`} /></label>
+                    {revising && <>
+                        {offer.responseReason && <p className={`${K_WELL} px-3 py-2 text-sm`}><strong>Approver’s reason</strong><br />{offer.responseReason}</p>}
+                        <label className="block text-sm"><span className={K_LABEL}>Joining date</span><input type="date" value={joining} onChange={e => setJoining(e.target.value)} className={`${INPUT} mt-1 sm:max-w-[200px]`} /></label>
+                        <label className="block text-sm"><span className={K_LABEL}>Note to approvers</span><textarea value={note} onChange={e => setNote(e.target.value)} maxLength={2000} rows={3} className={`${K_AREA} mt-1`} /></label>
+                    </>}
                     <div className="grid gap-4 sm:grid-cols-3">
                         <div className="space-y-2"><p className="text-sm font-semibold">Earnings (per month)</p>{cfg.earnings.map(field)}<p className="text-sm font-semibold">Gross {inr(gross)}</p></div>
                         <div className="space-y-2"><p className="text-sm font-semibold">Deductions (per month)</p>{cfg.deductions.map(field)}<p className="text-sm font-semibold">Net {inr(gross - ded)}</p></div>

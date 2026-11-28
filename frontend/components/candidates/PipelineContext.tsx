@@ -1,11 +1,11 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { Check, CircleHelp, Star, X } from 'lucide-react';
 import { positionFit, type FitVerdict } from '@/backend/lib/candidates/position-fit';
 import { boardColumns, findStage, nextRoundStage, reasonNeeded, rejectStageFor, stageGroups, unlistedStage, withReason, type StageDef } from '@/backend/lib/candidates/stage-list';
-import type { CandidateRecord, Position, PositionMember, Stage } from '@/backend/lib/candidates/types';
-import { api } from './api';
+import type { CandidateRecord, Interview, Position, PositionMember, Stage, StageNotification } from '@/backend/lib/candidates/types';
+import { api, qs } from './api';
 import { formatDate } from './format';
 import { ScheduleInterviewForm } from './InterviewScheduler';
 import { OutreachBody } from './OutreachPanel';
@@ -41,7 +41,7 @@ export interface PipelineContext {
 
 const daysSince = (iso: string) => Math.max(0, Math.floor((Date.now() - new Date(iso).getTime()) / 86_400_000));
 
-type Form = null | { kind: 'move'; stage: Stage } | { kind: 'interview' } | { kind: 'feedback' } | { kind: 'remove' } | { kind: 'told'; stage: Stage };
+type Form = null | { kind: 'move'; stage: Stage } | { kind: 'interview' } | { kind: 'feedback' } | { kind: 'remove' } | { kind: 'told'; stage: Stage; notification: StageNotification };
 
 const RECOMMENDATIONS = [['move_ahead', 'Move ahead'], ['hold', 'Hold'], ['reject', 'Reject']] as const;
 
@@ -74,11 +74,6 @@ export function PipelineStrip({ orgId, record, ctx, onHistory, tab }: {
     const first = record.fullName.split(' ')[0];
     const days = daysSince(member.stageChangedAt);
 
-    const moveTo = async (stage: Stage, why: string | null): Promise<boolean> => {
-        const res = await api<{ member: PositionMember }>(`/api/candidates/positions/${encodeURIComponent(position.id)}/members/${encodeURIComponent(member.id)}`, { method: 'PATCH', json: { orgId, stage, ...(why ? { remark: why } : {}) } });
-        if (!res.ok) { notify(res.error, 'error'); if (res.noAccess) reportError(res); return false; }
-        return true;
-    };
     const saveMove = async (stage: Stage) => {
         const target = stageOf(stage);
         // Owner 2026-11-21 (spec): a rejection takes a reason from HR's list; a move back a round needs a remark.
@@ -87,14 +82,13 @@ export function PipelineStrip({ orgId, record, ctx, onHistory, tab }: {
         const why = need === 'reject' ? withReason(reason, remark) : remark.trim() || null;
         if ((target.needsRemark || need === 'back') && !why) return;
         setBusy(true);
-        const ok = await moveTo(stage, why);
+        const res = await api<{ notification?: StageNotification | null }>(`/api/candidates/positions/${encodeURIComponent(position.id)}/members/${encodeURIComponent(member.id)}`, { method: 'PATCH', json: { orgId, stage, ...(why ? { remark: why } : {}) } });
         setBusy(false);
-        if (!ok) return;
+        if (!res.ok) { notify(res.error, 'error'); if (res.noAccess) reportError(res); return; }
         notify(`${record.fullName} → ${target.name}`, 'success');
         onHistory();
         ctx.onMoved();
-        // A stage marked for WhatsApp: offer to tell the candidate, as a drop on the board does.
-        setForm(target.whatsapp && !record.blacklisted && stageList?.source !== 'legacy' ? { kind: 'told', stage } : null);
+        setForm(res.data.notification && !record.blacklisted ? { kind: 'told', stage, notification: res.data.notification } : null);
     };
     const remove = async () => {
         setBusy(true);
@@ -185,8 +179,8 @@ export function PipelineStrip({ orgId, record, ctx, onHistory, tab }: {
 
             {form?.kind === 'told' && (
                 <div className={`${WELL} @container mt-3 px-3 py-3`}>
-                    <p className="mb-2 text-sm font-semibold text-text-primary">{first} is now {stageOf(form.stage).name}. Tell {first} on WhatsApp?</p>
-                    <OutreachBody orgId={orgId} record={record} positionId={position.id}
+                    <p className="mb-2 text-sm font-semibold text-text-primary">{first} is now {stageOf(form.stage).name}. Notify {first}?</p>
+                    <OutreachBody orgId={orgId} record={record} positionId={position.id} stage={stageOf(form.stage)} notification={form.notification}
                         onSent={() => { setForm(null); onHistory(); ctx.onMoved(); }} onSkip={() => setForm(null)} />
                 </div>
             )}
@@ -197,7 +191,7 @@ export function PipelineStrip({ orgId, record, ctx, onHistory, tab }: {
             )}
 
             {form?.kind === 'feedback' && (
-                <FeedbackForm orgId={orgId} record={record} position={position} onCancel={() => setForm(null)}
+                <FeedbackForm orgId={orgId} record={record} position={position} stages={stages} onCancel={() => setForm(null)}
                     onSaved={() => { setForm(null); onHistory(); notify('Feedback saved', 'success'); }} />
             )}
 
@@ -217,9 +211,21 @@ export function PipelineStrip({ orgId, record, ctx, onHistory, tab }: {
 }
 
 /** One round's feedback: the round, a 1–5 rating, a recommendation and the notes. */
-function FeedbackForm({ orgId, record, position, onCancel, onSaved }: { orgId: string; record: CandidateRecord; position: Position; onCancel: () => void; onSaved: () => void }) {
+function FeedbackForm({ orgId, record, position, stages, onCancel, onSaved }: { orgId: string; record: CandidateRecord; position: Position; stages: StageDef[]; onCancel: () => void; onSaved: () => void }) {
     const { notify, reportError } = useUi();
-    const [round, setRound] = useState('Round 1');
+    const [round, setRound] = useState('');
+    const [interviewRounds, setInterviewRounds] = useState<string[] | null>(null);
+    useEffect(() => {
+        const ctrl = new AbortController();
+        void api<{ interviews: Interview[] }>(`/api/candidates/interviews${qs({ orgId, candidateId: record.candidateId })}`, { signal: ctrl.signal }).then(res => {
+            if (ctrl.signal.aborted) return;
+            setInterviewRounds(res.ok ? res.data.interviews.filter(i => i.positionId === position.id && i.status !== 'cancelled' && i.status !== 'no_show').map(i => i.round || 'Interview') : []);
+        });
+        return () => ctrl.abort();
+    }, [orgId, record.candidateId, position.id]);
+    const configured = stages.filter(stage => stage.kind === 'progress' && !stage.hidden && stage.column && !['sourced', 'offer', 'joined', 'salary_pending'].includes(stage.key))
+        .map(stage => stage.column!.split(' · ')[0].trim().slice(0, 60));
+    const rounds = [...new Set([...(interviewRounds ?? []), ...configured])];
     const [rating, setRating] = useState(0);
     const [recommendation, setRecommendation] = useState<(typeof RECOMMENDATIONS)[number][0] | null>(null);
     const [note, setNote] = useState('');
@@ -239,8 +245,12 @@ function FeedbackForm({ orgId, record, position, onCancel, onSaved }: { orgId: s
         <div className={`${WELL} mt-3 px-3 py-3`}>
             <p className="text-sm font-semibold text-text-primary">Interview feedback</p>
             <div className="mt-2 grid gap-2 sm:grid-cols-[minmax(0,1fr)_auto]">
-                <label className="block text-xs font-medium text-text-secondary">Round
-                    <input value={round} onChange={e => setRound(e.target.value)} maxLength={60} placeholder="Round 1 · HR" className={`${INPUT} mt-1`} />
+                <label className="block text-xs font-medium text-text-secondary">Interview round
+                    <select value={round} onChange={e => setRound(e.target.value)} className={`${INPUT} mt-1`} required>
+                        <option value="">{interviewRounds === null ? 'Loading interview rounds…' : 'Choose the round'}</option>
+                        {rounds.map(name => <option key={name}>{name}</option>)}
+                        {interviewRounds !== null && !rounds.length && <option>Interview</option>}
+                    </select>
                 </label>
                 <div className="text-xs font-medium text-text-secondary">
                     <span id="pipe-fb-rating">Rating</span>
@@ -262,7 +272,7 @@ function FeedbackForm({ orgId, record, position, onCancel, onSaved }: { orgId: s
             <label htmlFor="pipe-fb-note" className="mt-2 block text-xs font-medium text-text-secondary">Feedback <span className="text-error">*</span></label>
             <textarea id="pipe-fb-note" rows={3} value={note} onChange={e => setNote(e.target.value)} maxLength={REMARK_MAX} placeholder="Strengths, gaps, what the next round should check"
                 className={`${INPUT} mt-1 h-auto min-h-[72px] resize-y py-2 leading-relaxed`} />
-            <p className="mt-1.5 text-xs text-text-tertiary">Saved in the history under this position. The stage does not change by itself.</p>
+            <p className="mt-1.5 text-xs text-text-tertiary">Appears with the candidate’s remarks and in Activity.</p>
             <div className="mt-2.5 flex justify-end gap-x-2">
                 <button type="button" onClick={onCancel} disabled={busy} className={BTN_GHOST}>Cancel</button>
                 <button type="button" onClick={() => void save()} disabled={busy || !ready} className={BTN_PRIMARY}>{busy && <Spinner />}Save feedback</button>

@@ -137,6 +137,7 @@ const Input = z.object({
   kind: z.enum(OUTREACH_KINDS),
   /** A stage update: HR's text for the middle of the message. */
   message: z.string().max(2000).nullish(),
+  expectedStage: z.string().min(1).max(80).nullish(),
 });
 export type OutreachInput = z.infer<typeof Input>;
 
@@ -212,7 +213,7 @@ export async function listOutreach(client: SupabaseClient, orgId: string, candid
 
 /** What the panel shows, and whether Send is allowed. Never sends. */
 export async function previewOutreach(client: SupabaseClient, orgId: string, input: unknown, now = new Date()): Promise<OutreachPreview & { phone: string | null; fullName: string; text: string }> {
-  const { applicationId, positionId, kind, message } = parseOutreachInput(input);
+  const { applicationId, positionId, kind, message, expectedStage } = parseOutreachInput(input);
   const record = await getRecord(client, orgId, applicationId);
   if (kind === "stage_update" && !positionId) throw new CandidateActionError(400, "Choose the position the update is for.");
 
@@ -234,6 +235,7 @@ export async function previewOutreach(client: SupabaseClient, orgId: string, inp
     if (error) fail("check the stage", error);
     if (!data) throw new CandidateActionError(400, "This person is no longer in that position.");
     const key = (data as { stage: string }).stage;
+    if (expectedStage && key !== expectedStage) throw new CandidateActionError(409, "The candidate's stage changed. Close this update and check the pipeline.");
     stage = { key, name: stageName(list.stages, key), defaultText: list.stages.find((x) => x.key === key)?.message ?? "" };
   }
   const text = stage ? (message === undefined || message === null ? stage.defaultText : oneLine(message)) : "";

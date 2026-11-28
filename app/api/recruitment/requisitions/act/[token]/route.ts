@@ -5,7 +5,7 @@ import { escapeReviewText as esc, reviewPage } from "@/backend/lib/candidates/re
 import { CandidateActionError } from "@/backend/lib/candidates/records";
 import { defaultNotifyDeps, mobilityText, requisitionNotifier, type LinkSummary } from "@/backend/lib/candidates/requisition-notify";
 import { decideRequisition } from "@/backend/lib/candidates/requisitions";
-import { APPROVAL_LEVEL_LABELS, type RequisitionLevel as ApprovalLevel } from "@/backend/lib/candidates/types";
+import { APPROVAL_LEVEL_LABELS, experienceText, type RequisitionLevel as ApprovalLevel } from "@/backend/lib/candidates/types";
 import { actionPage } from "@/backend/lib/emailActions/page";
 import { consumeEmailActionToken, peekEmailActionToken, recordTokenResult } from "@/backend/lib/emailActions/tokens";
 
@@ -20,13 +20,15 @@ const ENTITY = "recruitment_requisition";
 const html = (body: string, status = 200) => new NextResponse(body, { status, headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" } });
 const lpa = (v: number | null) => (v === null ? "—" : `₹${(v / 100_000).toLocaleString("en-IN", { maximumFractionDigits: 1 })} LPA`);
 
-function decisionPage(summary: LinkSummary, level: ApprovalLevel, error: string | null, chosen: string, reason: string): string {
+function decisionPage(summary: LinkSummary, level: ApprovalLevel, error: string | null, chosen: string, reason: string, inPlan = summary.requestedInPlan === true): string {
   const rows: [string, string][] = [
     ["Request", summary.requisitionNo ?? "—"],
     ["Role", [summary.roleTitle, summary.department, summary.location].filter(Boolean).join(" · ")],
     ["Positions", `${summary.positions} · ${summary.requestType === "replacement" ? `replacement for ${summary.replacingName ?? "—"}` : "new"}`],
     ["Budget band (CTC)", `${lpa(summary.budgetMinCtc)} to ${lpa(summary.budgetMaxCtc)}`],
-    ["Experience", summary.minExperienceYears !== null ? `${summary.minExperienceYears}+ years` : "—"],
+    ["Experience", experienceText(summary.minExperienceYears, summary.maxExperienceYears) || "—"],
+    ...(summary.requestedInPlan == null ? [] : [["Requester’s plan status", summary.requestedInPlan ? "In plan" : "Out of plan"] as [string, string]]),
+    ...(summary.jdFileName ? [["Job description PDF", `${summary.jdFileName} (in Hiring requests)`] as [string, string]] : []),
     ["Qualification", summary.qualification ?? "—"],
     ["Target joining", summary.targetJoiningDate ?? "—"],
     ["Raised by", summary.raisedByName ?? "—"],
@@ -47,7 +49,7 @@ ${choice("approve", "Approve", level === "hod" ? "It goes on to the HR Head." : 
 ${choice("send_back", "Send back for change", "The manager changes the request and submits it again. Say what needs to change.")}
 ${choice("hold", "Put on hold", "It waits until an approver resumes it. Give the reason.")}
 ${choice("reject", "Reject", "Final. Give the reason.")}
-${level === "hr_head" ? `<div class="plan"><input type="checkbox" name="in_plan" value="1" id="in_plan"><label for="in_plan"><b>This role is in the approved headcount plan</b><br><small class="muted">Tick it before approving. Unticked, the request goes to the Director.</small></label></div>` : ""}
+${level === "hr_head" ? `<div class="plan"><input type="checkbox" name="in_plan" value="1" id="in_plan" ${inPlan ? "checked" : ""}><label for="in_plan"><b>This role is in the approved headcount plan</b><br><small class="muted">Check the plan status before approving. Out-of-plan requests go to the Director.</small></label></div>` : ""}
 </fieldset><label class="muted" for="reason">Reason or note</label>
 <textarea id="reason" name="reason" maxlength="2000" placeholder="Required for Reject, Send back and Hold">${esc(reason)}</textarea>
 <button class="rf-primary" type="submit">Record my decision</button>
@@ -86,9 +88,9 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
     reason = String(form.get("reason") ?? "").trim().slice(0, 2000);
     inPlan = form.get("in_plan") === "1";
   } catch { /* an empty form reads as no decision */ }
-  if (!["approve", "reject", "send_back", "hold"].includes(decision)) return html(decisionPage(summary, level, "Choose one of the four.", decision, reason), 400);
+  if (!["approve", "reject", "send_back", "hold"].includes(decision)) return html(decisionPage(summary, level, "Choose one of the four.", decision, reason, inPlan), 400);
   if ((decision === "reject" || decision === "send_back" || decision === "hold") && !reason) {
-    return html(decisionPage(summary, level, decision === "reject" ? "Give the reason for rejecting." : decision === "hold" ? "Give the reason for putting it on hold." : "Say what needs to change.", decision, reason), 400);
+    return html(decisionPage(summary, level, decision === "reject" ? "Give the reason for rejecting." : decision === "hold" ? "Give the reason for putting it on hold." : "Say what needs to change.", decision, reason, inPlan), 400);
   }
 
   const claim = await consumeEmailActionToken(token);

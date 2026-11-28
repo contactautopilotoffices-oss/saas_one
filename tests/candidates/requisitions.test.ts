@@ -18,7 +18,7 @@ import {
   aboveCtcLevel, canDecide, createRequisition, decideRequisition, firstLevelFor, getRequisition, listRequisitions, loadRecruitmentConfig,
   approverPools, canRaiseRequisitions, mayConfigureApprovals, mayConfigureRaisers, requisitionAccess, roleChoices, saveRaisers, saveRecruitmentConfig, submitRequisition, updateRequisition, withdrawRequisition, workingDaysBetween, type RequisitionEvent,
   canEndorse, confirmStillNeeded, endorseRequisition, hasEndorsed, saveDepartmentHeads, saveRejectionReasons, unassignedRoles,
-  checkAgainstHierarchy, hierarchyFromEmployees, resolveHierarchy, saveHierarchy,
+  checkAgainstHierarchy, hierarchyFromEmployees, requisitionJdPdf, resolveHierarchy, saveHierarchy,
 } from "../../backend/lib/candidates/requisitions";
 
 import { DEFAULT_REJECTION_REASONS } from "../../backend/lib/candidates/stage-list";
@@ -33,7 +33,7 @@ const HR_HEAD = "00000000-0000-0000-0000-000000000012";
 const DIRECTOR = "00000000-0000-0000-0000-000000000013";
 const HR_BACKUP = "00000000-0000-0000-0000-000000000014";
 const by = (id: string, name: string) => ({ id, name });
-const FORM = { roleTitle: "Senior Technical Executive", department: "Facilities", location: "Bengaluru", positions: 2, budgetMinCtc: 400_000, budgetMaxCtc: 600_000, requiredSkills: ["MEP", "BMS"], minExperienceYears: 5, qualification: "B.E. Electrical", targetJoiningDate: "2026-12-15", justification: "Two sites opening in January.", reportingManager: "Priya", structureNote: "Reports to the Facilities Lead, Bengaluru.", internalMobility: false };
+const FORM = { roleTitle: "Senior Technical Executive", department: "Facilities", location: "Bengaluru", positions: 2, budgetMinCtc: 400_000, budgetMaxCtc: 600_000, requiredSkills: ["MEP", "BMS"], minExperienceYears: 5, qualification: "B.E. Electrical", targetJoiningDate: "2026-12-15", justification: "Two sites opening in January.", reportingManager: "Priya", requestedInPlan: true, internalMobility: false };
 
 describe("manpower requisitions", () => {
   let db: PGlite;
@@ -482,10 +482,8 @@ describe("manpower requisitions", () => {
     assert.equal(revoked.length, 4, "sent back: no old link can decide the edited request");
   });
 
-  // Owner 2026-11-24 (23 Nov meeting): place in the structure and internal mobility are required; department and role
-  // come from the company hierarchy, a new role under "Others"; everyone involved hears of it in the app too.
-  it("requires the structure note and internal mobility, and keeps the role to the hierarchy unless raised under Others", async () => {
-    await assert.rejects(createRequisition(client, ORG, by(MANAGER, "Ravi Kumar"), { ...FORM, structureNote: "", submit: true }), /where the role sits/);
+  it("requires the requester's plan status and internal mobility, and keeps the role to the hierarchy unless raised under Others", async () => {
+    await assert.rejects(createRequisition(client, ORG, by(MANAGER, "Ravi Kumar"), { ...FORM, requestedInPlan: null, submit: true }), /In plan or Out of plan/);
     await assert.rejects(createRequisition(client, ORG, by(MANAGER, "Ravi Kumar"), { ...FORM, internalMobility: null, submit: true }), /internal mobility/);
 
     const master = hierarchyFromEmployees([
@@ -504,7 +502,7 @@ describe("manpower requisitions", () => {
 
     await assert.rejects(createRequisition(client, ORG, by(MANAGER, "Ravi Kumar"), { ...FORM, roleTitle: "Pilot", submit: true }, { hierarchy: fromMaster }), /Others/);
     const fresh = await createRequisition(client, ORG, by(MANAGER, "Ravi Kumar"), { ...FORM, roleTitle: "Pilot", roleIsNew: true, internalMobility: true, submit: true }, { hierarchy: fromMaster });
-    assert.deepEqual([fresh.status, fresh.roleIsNew, fresh.internalMobility, fresh.structureNote], ["submitted", true, true, FORM.structureNote]);
+    assert.deepEqual([fresh.status, fresh.roleIsNew, fresh.internalMobility, fresh.structureNote], ["submitted", true, true, null]);
     await withdrawRequisition(client, ORG, by(MANAGER, "Ravi Kumar"), fresh.id, null);
 
     // HR's own list (HR Configs) wins over the employee master; empty goes back to it.
@@ -517,6 +515,29 @@ describe("manpower requisitions", () => {
     await saveRecruitmentConfig(client, ORG, { targetDays: 30 });
     assert.equal((await loadRecruitmentConfig(client, ORG)).hierarchy.length, 1, "an approvals save keeps it");
     assert.deepEqual(await saveHierarchy(client, ORG, { departments: [] }), []);
+  });
+
+  it("enforces the requester's department and carries the JD and zero-to-one range into the approved position", async () => {
+    const manager = by(MANAGER, "Ravi Kumar");
+    const department = { requesterDepartment: "Facilities" };
+    await assert.rejects(createRequisition(client, ORG, manager, { ...FORM, department: "Finance" }, department), /own department/);
+    await assert.rejects(createRequisition(client, ORG, manager, FORM, { requesterDepartment: null }), /employee profile/);
+    const pdf = Buffer.from("%PDF-fixture");
+    const draft = await createRequisition(client, ORG, manager, { ...FORM, minExperienceYears: 0, maxExperienceYears: 1, requestedInPlan: false }, {
+      ...department, jd: { fileName: "JD.pdf", text: "Position requires 0 to 1 years of experience.", pdfBase64: pdf.toString("base64") },
+    });
+    await assert.rejects(updateRequisition(client, ORG, manager, draft.id, { maxExperienceYears: 0, minExperienceYears: 2 }, department), /at least the minimum/);
+    await assert.rejects(updateRequisition(client, ORG, manager, draft.id, { department: "Finance" }, department), /own department/);
+    await assert.rejects(submitRequisition(client, ORG, manager, draft.id, { requesterDepartment: "Finance" }), /own department/);
+    assert.deepEqual([draft.minExperienceYears, draft.maxExperienceYears, draft.requestedInPlan, draft.jdFileName], [0, 1, false, "JD.pdf"]);
+    assert.deepEqual(await requisitionJdPdf(client, ORG, draft.id), new Uint8Array(pdf));
+    const submitted = await submitRequisition(client, ORG, manager, draft.id, department);
+    const reviewed = await decideRequisition(client, ORG, by(HR_HEAD, "Anita Verma"), submitted.id, { decision: "approve", inPlan: true });
+    assert.deepEqual([reviewed.requestedInPlan, reviewed.inPlan], [false, true]);
+    const position = await getPosition(client, ORG, reviewed.positionId!);
+    assert.equal(position.jdText, "Position requires 0 to 1 years of experience.");
+    assert.equal(position.jdFileName, "JD.pdf");
+    assert.deepEqual([position.filters.expMin, position.filters.expMax], [0, 1]);
   });
 
   it("tells everyone involved in the app as well: the approver, and the raiser, HR Head and Director of each decision", async () => {

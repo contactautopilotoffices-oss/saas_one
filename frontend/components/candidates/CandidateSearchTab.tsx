@@ -85,6 +85,7 @@ export default function CandidateSearchTab({ orgId, collapseStyle = 'panel', vie
     hideTabs?: boolean;
 }) {
     const [readingRequest, setReadingRequest] = useState(0);
+    const [importRequest, setImportRequest] = useState(0);
     const controlled = viewProp !== undefined;
     const [ownView, setOwnView] = useState<View>('search');
     const view: View | null = controlled ? viewProp : ownView;
@@ -178,7 +179,7 @@ export default function CandidateSearchTab({ orgId, collapseStyle = 'panel', vie
             {/* One width for every view (owner 2026-11-11), so the tab bar does not shift when the view changes: the
                 whole width of the page, so nothing is left empty beside it when the sidebar is collapsed. */}
             <div className="w-full min-w-0 space-y-5">
-                {view !== null && (!hideTabs || reading || counts.attention > 0 || ['search', 'candidates', 'resumes', 'email'].includes(view)) && <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
+                {view !== null && <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
                     {/* The module's name: this row replaces the HR page header on the Recruitment tab. */}
                     {!hideTabs && <>
                     <div className="flex items-center gap-2">
@@ -231,7 +232,7 @@ export default function CandidateSearchTab({ orgId, collapseStyle = 'panel', vie
                         )}
                         {/* Owner 2026-11-24: link the HR mailbox, like Zoho Tasks */}
                         <RecruitmentMailButton orgId={orgId} onOpenEmail={() => open('email')} />
-                        {view !== 'resumes' && <button type="button" onClick={() => open('resumes')} className={`${BTN_SECONDARY} h-9 rounded-[10px] px-3`} title="Upload resumes from the Resumes tab"><Upload className="h-4 w-4" />Upload resumes</button>}
+                        {view !== 'resumes' && <button type="button" onClick={() => { setImportRequest(n => n + 1); open('resumes'); }} className={`${BTN_SECONDARY} h-9 rounded-[10px] px-3`} title="Open Import & sources"><Upload className="h-4 w-4" />Upload resumes</button>}
                     </div>
                 </div>}
 
@@ -245,7 +246,7 @@ export default function CandidateSearchTab({ orgId, collapseStyle = 'panel', vie
                         {id === 'pipeline' && <PipelineView orgId={orgId} dataVersion={dataVersion} onDataChanged={onDataChanged} selectPosition={pipelineRequest} onSearch={openSearch} />}
                         {id === 'candidates' && <RecordsView orgId={orgId} dataVersion={dataVersion} onDataChanged={onDataChanged} />}
                         {id === 'sheets' && <SheetsView orgId={orgId} dataVersion={dataVersion} onDataChanged={onDataChanged} />}
-                        {id === 'resumes' && <ResumesView orgId={orgId} readingRequest={readingRequest} />}
+                        {id === 'resumes' && <ResumesView orgId={orgId} readingRequest={readingRequest} importRequest={importRequest} onDataChanged={onDataChanged} />}
                         {id === 'outreach' && <OutreachView orgId={orgId} onSearch={() => open('search')} />}
                         {id === 'email' && <EmailView orgId={orgId} onSettings={() => open('resumes')} onRequisitions={() => { setRequisitionVersion(n => n + 1); open('requisitions'); }} />}
                         {/* Owner 2026-11-20: the hiring request approvers are in the Tech dashboard's HR Configs tab */}

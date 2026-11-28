@@ -179,6 +179,7 @@ describe("outreach on WhatsApp", () => {
     const again = await previewOutreach(client, ORG, { applicationId: record.id, positionId, kind: "stage_update" }, WORKING_HOURS());
     assert.match(again.blockedBy ?? "", /Already told about L1 Pending by Roohi/);
     await moveMember(client, ORG, ME, positionId, member.id, "l2_pending", null);
+    await assert.rejects(sendOutreach(client, ORG, ME, { applicationId: record.id, positionId, kind: "stage_update", message: "Earlier decision.", expectedStage: "l1_pending" }, { send: okSender, now: WORKING_HOURS }), /stage changed/);
     const next = await previewOutreach(client, ORG, { applicationId: record.id, positionId, kind: "stage_update" }, WORKING_HOURS());
     assert.equal(next.canSend, true);
     await sendOutreach(client, ORG, ME, { applicationId: record.id, positionId, kind: "stage_update", message: "Please complete the assignment by Monday." }, { send: okSender, now: WORKING_HOURS });

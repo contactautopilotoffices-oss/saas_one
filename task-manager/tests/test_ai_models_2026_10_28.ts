@@ -116,6 +116,7 @@ async function run() {
     check('Gemini picks go to Google, not Engy', /startsWith\(GEMINI_PREFIX\)/.test(read('task-manager/brain/llm.ts')));
     const route = read('app/api/task-manager/ai-models/route.ts');
     check('the API is Tech-only (Control Centre guard) on both GET and POST', (route.match(/requireControlCentre\(/g) || []).length === 2);
+    check('HR Configs owns Otto, recruitment and screening call models', C.AI_JOBS.filter(j => C.isHrModelGroup(j.group)).every(j => /^(hr_|candidate_|call_)/.test(j.key)) && C.AI_JOBS.filter(j => /^(hr_|candidate_|call_)/.test(j.key)).every(j => C.isHrModelGroup(j.group)));
     const sql = read('supabase/migrations/20261028140001_task_manager_ai_models.sql').split('\n').filter(l => !l.trim().startsWith('--')).join('\n');
     check('migration: one new table, RLS on, nothing destructive', /CREATE TABLE IF NOT EXISTS public\.task_manager_ai_models/.test(sql) && /ENABLE ROW LEVEL SECURITY/.test(sql) && !/^\s*(DROP|DELETE|UPDATE|TRUNCATE)\b/im.test(sql) && !/ALTER TABLE public\.(?!task_manager_ai_models)/i.test(sql));
     // 2026-11-02: the Candidate Search jobs are allowed by the follow-up migration that widens the job list

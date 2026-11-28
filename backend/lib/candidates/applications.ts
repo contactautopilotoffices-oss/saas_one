@@ -13,7 +13,7 @@
  *
  * Nobody is shortlisted or rejected by a form: HR reads it like any other record.
  */
-import { randomBytes } from "node:crypto";
+import { createHash, randomBytes, randomUUID } from "node:crypto";
 
 import type { SupabaseClient } from "@supabase/supabase-js";
 
@@ -148,6 +148,7 @@ export interface PublicForm {
   /** Owner 2026-11-24: the company profile link HR set, when any. */
   companyProfileUrl?: string | null;
   /** Owner 2026-11-24: the assignment's brief (kind "assignment"). */
+  documents?: Record<string, { status: "uploaded" | "verified" | "rejected"; fileName: string | null; reviewNote: string | null }>;
   assignment?: { title: string; brief: string; guidelines: string | null; driveLink: string | null; attachmentName?: string; downloadUrl?: string; due: string | null; submitted: boolean } | null;
 }
 
@@ -161,6 +162,15 @@ export async function kindLink(client: SupabaseClient, orgId: string, kind: "ass
   return { id: row.id, token: row.token, kind: "personal", positionId: row.position_id, url: applicationUrl(row.token) };
 }
 
+export async function documentsLink(client: SupabaseClient, orgId: string, candidateId: string, positionId: string | null): Promise<ApplicationLink | null> {
+  let query = client.from(LINKS).select("id, token, position_id").eq("organization_id", orgId).eq("candidate_id", candidateId)
+    .eq("kind", "documents").is("disabled_at", null);
+  query = positionId ? query.eq("position_id", positionId) : query.is("position_id", null);
+  const { data, error } = await query.order("created_at", { ascending: false }).limit(1).maybeSingle();
+  if (error) fail("find the documents link", error);
+  return data ? toLink({ ...data, kind: "personal" }) : null;
+}
+
 /** The assignment page's form: a link to the work, notes, and a file (at least one of them). */
 export const ASSIGNMENT_FORM_FIELDS: ApplicationField[] = [
   { id: "submission_link", label: "Link to your work (Drive, Behance, GitHub…)", type: "text", required: false, target: null },
@@ -168,7 +178,7 @@ export const ASSIGNMENT_FORM_FIELDS: ApplicationField[] = [
   { id: "work_file", label: "Your file", type: "file", required: false, help: "PDF, Word, PowerPoint, Excel, image or ZIP, up to 4 MB", target: null },
 ];
 /** The documents page's form: one file per document HR asks for. */
-export const documentFields = (items: string[]): ApplicationField[] => items.map((label, i) => ({ id: `doc_${i + 1}`, label, type: "file" as const, required: false, help: "PDF or image, up to 4 MB", target: null }));
+export const documentFields = (items: string[]): ApplicationField[] => items.map((label, i) => ({ id: `doc_${i + 1}`, label, type: "file" as const, required: false, help: "PDF, JPG, PNG or WebP, up to 4 MB", target: null }));
 
 /**
  * The screening questions as a form (the same page and checks as the application form). Owner 2026-11-25: with the
@@ -275,9 +285,16 @@ export function recordFieldsFrom(form: ApplicationFormConfig, answers: Record<st
 
 export interface ResumeUpload { name: string; type: string; bytes: Uint8Array }
 /** The slice of storage this module uses; the tests pass a fake. */
-export interface ApplicationStorage { upload(path: string, bytes: Uint8Array, contentType: string): Promise<{ error: { message: string } | null }> }
+export interface ApplicationStorage {
+  upload(path: string, bytes: Uint8Array, contentType: string): Promise<{ error: { message: string } | null }>;
+  remove?(path: string): Promise<unknown>;
+}
 const defaultStorage = (client: SupabaseClient): ApplicationStorage => ({
   upload: async (path, bytes, contentType) => client.storage.from(RESUME_BUCKET).upload(path, bytes, { contentType, upsert: false }),
+  async remove(path) {
+    const { error } = await client.storage.from(RESUME_BUCKET).remove([path]);
+    if (error) console.error("[candidates] couldn't remove replaced document", error);
+  },
 });
 
 /**
@@ -369,7 +386,39 @@ const WORK_TYPES: Record<string, string> = {
   "application/vnd.ms-excel": "xls", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": "xlsx",
   "image/png": "png", "image/jpeg": "jpg", "application/zip": "zip", "application/x-zip-compressed": "zip",
 };
-const DOC_TYPES: Record<string, string> = { "application/pdf": "pdf", "image/png": "png", "image/jpeg": "jpg" };
+const DOC_TYPES: Record<string, string> = { "application/pdf": "pdf", "image/png": "png", "image/jpeg": "jpg", "image/webp": "webp" };
+
+function documentContentType(bytes: Uint8Array): string | null {
+  const data = Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  if (data.subarray(0, 5).toString() === "%PDF-") return "application/pdf";
+  if (data.subarray(0, 8).toString("hex") === "89504e470d0a1a0a") return "image/png";
+  if (data.subarray(0, 3).toString("hex") === "ffd8ff") return "image/jpeg";
+  if (data.subarray(0, 4).toString() === "RIFF" && data.subarray(8, 12).toString() === "WEBP") return "image/webp";
+  return null;
+}
+
+type DocumentRow = {
+  id: string; item: string; position_id: string | null; offer_id: string | null; file_name: string | null; file_path: string;
+  status: "uploaded" | "verified" | "rejected"; review_note: string | null; reviewed_by_name: string | null; uploaded_at: string | Date;
+};
+
+export async function currentDocumentRows(client: SupabaseClient, orgId: string, candidateId: string, positionId?: string | null): Promise<DocumentRow[]> {
+  let query = client.from(DOCUMENTS).select("id, item, position_id, offer_id, file_name, file_path, status, review_note, reviewed_by_name, uploaded_at")
+    .eq("organization_id", orgId).eq("candidate_id", candidateId).neq("file_path", "pending");
+  if (positionId !== undefined) query = positionId ? query.eq("position_id", positionId) : query.is("position_id", null);
+  const { data, error } = await query.order("uploaded_at", { ascending: false }).order("id").limit(200);
+  if (error) {
+    if (missing(error)) return [];
+    fail("load the documents", error);
+  }
+  const seen = new Set<string>();
+  return ((data ?? []) as DocumentRow[]).filter(row => {
+    const key = JSON.stringify([row.position_id, row.item]);
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
 const DAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 /** "Mon, 1 Dec 2026 at 6:00 pm (IST)". */
@@ -395,9 +444,16 @@ async function kindForm(client: SupabaseClient, link: LinkRow, s: OutreachSettin
         due: a.due_at ? istDue(new Date(a.due_at)) : null, submitted: a.status === "submitted" },
     };
   }
+  if (!link.candidate_id) return null;
+  const fields = documentFields(s.documents.items);
+  const current = await currentDocumentRows(client, link.organization_id, link.candidate_id, link.position_id);
+  const documents = Object.fromEntries(fields.flatMap(field => {
+    const row = current.find(d => d.item === field.label);
+    return row ? [[field.id, { status: row.status, fileName: row.file_name, reviewNote: row.status === "rejected" ? row.review_note : null }]] : [];
+  }));
   return {
-    ...base, kind: "documents",
-    form: { title: "Your documents", intro: "Please upload the documents below so we can prepare your offer. Upload what you have now; you can open this link again to add the rest.", fields: documentFields(s.documents.items), consentText: s.applicationForm.consentText, thanks: "Thank you. Your documents have reached our recruitment team." },
+    ...base, kind: "documents", documents,
+    form: { title: "Your documents", intro: "Use this link to add files, check HR’s review, or replace a document. Verified documents can be replaced once HR asks for changes.", fields, consentText: s.applicationForm.consentText, thanks: "Thank you. Your documents have reached our recruitment team." },
   };
 }
 
@@ -439,35 +495,60 @@ async function submitAssignment(client: SupabaseClient, link: LinkRow, raw: Reco
   return { thanks: "Thank you. Your assignment has reached our recruitment team; we will be in touch.", applicationId: a.id, assignmentId: a.id, organizationId: orgId };
 }
 
-/** The candidate's documents: one file per item HR asks for; the link stays open to add the rest. */
+/** A replacement becomes current only after its upload succeeds. */
 async function submitDocuments(client: SupabaseClient, link: LinkRow, settings: OutreachSettings, files: Record<string, ResumeUpload>, storage: ApplicationStorage): Promise<{ thanks: string; applicationId: string }> {
   const orgId = link.organization_id;
   if (!link.candidate_id) throw new CandidateActionError(404, "This link is no longer open.");
+  const candidateId = link.candidate_id;
   const fields = documentFields(settings.documents.items);
   const given = fields.filter((f) => files[f.id]);
   if (!given.length) throw new FormError(fields[0]?.id ?? null, "Attach at least one document.");
-  for (const f of given) {
-    const file = files[f.id];
-    if (!DOC_TYPES[file.type]) throw new FormError(f.id, `"${f.label}": attach a PDF or an image.`);
-    if (file.bytes.byteLength > MAX_RESUME_BYTES) throw new FormError(f.id, `"${f.label}" is over 4 MB.`);
+  const current = await currentDocumentRows(client, orgId, candidateId, link.position_id);
+  const uploads = given.map(field => {
+    const file = files[field.id];
+    const type = documentContentType(file.bytes);
+    if (!type) throw new FormError(field.id, `"${field.label}": attach a PDF, JPG, PNG or WebP file.`);
+    if (file.bytes.byteLength > MAX_RESUME_BYTES) throw new FormError(field.id, `"${field.label}" is over 4 MB.`);
+    const previous = current.find(row => row.item === field.label);
+    if (previous?.status === "verified") throw new FormError(field.id, `"${field.label}" is verified. Ask HR to reopen it first.`);
+    return { field, previous, file: { ...file, type } };
+  });
+  let offerQuery = client.from("recruitment_offers").select("id").eq("organization_id", orgId).eq("candidate_id", candidateId).in("status", ["pending", "approved", "released"]);
+  offerQuery = link.position_id ? offerQuery.eq("position_id", link.position_id) : offerQuery.is("position_id", null);
+  const { data: offers } = await offerQuery.order("created_at", { ascending: false }).limit(1);
+  const offerId = offers?.[0]?.id ?? null;
+  const saved: string[] = [];
+  const failed: string[] = [];
+  const remove = async (path: string) => { await storage.remove?.(path).catch(e => console.error("[candidates] document cleanup failed", e)); };
+  for (const { field, file, previous } of uploads) {
+    const path = `documents/${orgId}/${randomUUID()}.${DOC_TYPES[file.type]}`;
+    if (!await upload(storage, path, file)) { failed.push(field.label); continue; }
+    const payload = { file_path: path, file_name: file.name.slice(0, 200), status: "uploaded", review_note: null, reviewed_by_name: null,
+      reviewed_at: null, uploaded_at: new Date().toISOString(), offer_id: previous?.offer_id ?? offerId, link_id: link.id };
+    const key = createHash("sha256").update(JSON.stringify([orgId, candidateId, link.position_id, field.label])).digest("hex");
+    const id = `${key.slice(0, 8)}-${key.slice(8, 12)}-4${key.slice(13, 16)}-8${key.slice(17, 20)}-${key.slice(20, 32)}`;
+    const result = previous
+      ? await client.from(DOCUMENTS).update(payload).eq("organization_id", orgId).eq("id", previous.id).eq("file_path", previous.file_path)
+        .eq("status", previous.status).select("id").maybeSingle()
+      : await client.from(DOCUMENTS).insert({ ...payload, id, organization_id: orgId, candidate_id: candidateId, position_id: link.position_id, item: field.label })
+        .select("id").single();
+    if (result.error || !result.data) {
+      if (result.error && result.error.code !== "23505") console.error("[candidates] document save failed", result.error);
+      await remove(path);
+      failed.push(field.label);
+      continue;
+    }
+    if (previous) await remove(previous.file_path);
+    saved.push(field.label);
   }
-  const { data: offer } = await client.from("recruitment_offers").select("id").eq("organization_id", orgId).eq("candidate_id", link.candidate_id).in("status", ["pending", "approved", "released"]).order("created_at", { ascending: false }).limit(1);
-  const offerId = ((offer ?? []) as { id: string }[])[0]?.id ?? null;
-  let saved = 0;
-  for (const f of given) {
-    const file = files[f.id];
-    const { data: row, error } = await client.from(DOCUMENTS).insert({ organization_id: orgId, candidate_id: link.candidate_id, position_id: link.position_id, offer_id: offerId, link_id: link.id, item: f.label, file_path: "pending", file_name: file.name.slice(0, 200) }).select("id").single();
-    if (error) fail("save the document", error);
-    const id = (row as { id: string }).id;
-    const path = `documents/${orgId}/${id}.${DOC_TYPES[file.type]}`;
-    if (await upload(storage, path, file)) { await client.from(DOCUMENTS).update({ file_path: path }).eq("id", id); saved += 1; }
-    else await client.from(DOCUMENTS).update({ status: "rejected", review_note: "The upload failed; ask the candidate to upload it again." }).eq("id", id);
-  }
+  if (!saved.length) throw new CandidateActionError(409, "The files could not be saved. Refresh this page to check for changes and try again.");
   await client.from(LINKS).update({ submitted_at: new Date().toISOString() }).eq("id", link.id);
   await recordAction(client, orgId, systemActor("Documents page"), {
-    candidateId: link.candidate_id, applicationId: link.application_id, positionId: link.position_id, action: "remark", toValue: `Uploaded ${saved} document${saved === 1 ? "" : "s"}`, meta: { kind: "documents_uploaded", items: given.map((f) => f.label) },
+    candidateId, applicationId: link.application_id, positionId: link.position_id, action: "remark",
+    toValue: `Uploaded or replaced ${saved.length} document${saved.length === 1 ? "" : "s"}`, meta: { kind: "documents_uploaded", items: saved },
   });
-  return { thanks: "Thank you. Your documents have reached our recruitment team.", applicationId: link.id };
+  const thanks = failed.length ? `Saved: ${saved.join(", ")}. Please try again for ${failed.join(", ")}.` : "Thank you. Your documents have reached our recruitment team.";
+  return { thanks, applicationId: link.id };
 }
 
 /**

@@ -13,6 +13,9 @@ export const MIGRATION = readFileSync(path.join("supabase", "migrations", "20261
   .replace(/extensions\.vector\(768\)/g, "extensions.vector");
 
 const STUBS = `
+  create schema if not exists storage;
+  create table storage.buckets (id text primary key, name text, public boolean, file_size_limit bigint, allowed_mime_types text[]);
+
   create schema if not exists extensions;
   create schema if not exists auth;
   create table if not exists auth.users (id uuid primary key);
@@ -41,9 +44,8 @@ export const AUTO_INDEXING_MIGRATION = readFileSync(path.join("supabase", "migra
 /** The fields resumes will fill (owner 2026-11-07); the filter panel must also work before it is applied. */
 export const RESUME_FIELDS_MIGRATION = readFileSync(path.join("supabase", "migrations", "20261107000001_candidate_search_resume_fields.sql"), "utf8");
 
-/** Resume files (owner 2026-11-07, phase 1). PGlite has no storage schema, so the bucket row is left out. */
-export const RESUME_FILES_MIGRATION = readFileSync(path.join("supabase", "migrations", "20261107000002_candidate_resume_files.sql"), "utf8")
-  .replace(/insert into storage\.buckets[\s\S]*?on conflict \(id\) do nothing;/i, "");
+/** Resume files and the private bucket's file-type rules. */
+export const RESUME_FILES_MIGRATION = readFileSync(path.join("supabase", "migrations", "20261107000002_candidate_resume_files.sql"), "utf8");
 /** Resume text, contacts and the link to a candidate (owner 2026-11-10, phase 2); recreates the filter view with has_resume. */
 export const RESUME_LINKS_MIGRATION = readFileSync(path.join("supabase", "migrations", "20261110000001_candidate_resume_links.sql"), "utf8");
 /** Files removed as not resumes keep a row with status 'rejected' (owner 2026-11-10). */
@@ -132,6 +134,7 @@ export async function freshDb(options: { resumeSourcing?: boolean; resumeFields?
   if (options.resumeFields !== false) { await db.exec(REQUISITIONS_STUBS); await db.exec(REQUISITIONS_MIGRATION); }
   if (options.resumeFields !== false && options.requisitionFollowups !== false) await db.exec(REQUISITION_FOLLOWUPS_MIGRATION);
   if (options.resumeFields !== false && options.requisitionFollowups !== false) await db.exec(REQUISITION_HOD_MIGRATION);
+  if (options.resumeFields !== false && options.requisitionFollowups !== false) await db.exec(readFileSync(path.join("supabase", "migrations", "20261128000001_hiring_request_details.sql"), "utf8"));
   if (options.resumeFields !== false && options.requisitionFollowups !== false) await db.exec(OUTREACH_CAMPAIGNS_MIGRATION);
   if (options.resumeFields !== false && options.trackers !== false) await db.exec(TRACKERS_MIGRATION);
   if (options.resumeFields !== false && options.trackers !== false) await db.exec(TRACKER_PREVIEW_MIGRATION);
@@ -141,6 +144,7 @@ export async function freshDb(options: { resumeSourcing?: boolean; resumeFields?
   if (options.resumeFields !== false && options.hiringFlow !== false && options.requisitionFollowups !== false) {
     await db.exec(readFileSync(path.join("supabase", "migrations", "20261127000001_optional_interview_scorecards.sql"), "utf8"));
     await db.exec(readFileSync(path.join("supabase", "migrations", "20261127000002_assignment_brief_attachments.sql"), "utf8"));
+    await db.exec(readFileSync(path.join("supabase", "migrations", "20261128000002_recruitment_documents_and_offer_letter.sql"), "utf8"));
   }
   if (options.resumeFields !== false && options.hiringFlow !== false && options.requisitionFollowups !== false) await db.exec(POSITION_SCREENING_MIGRATION);
   if (options.resumeFields !== false && options.stages !== false) await db.exec(STAGES_MIGRATION);

@@ -3,6 +3,8 @@ import { NextResponse } from "next/server";
 import { WRITE_RATE_LIMIT } from "@/backend/lib/candidates/config";
 import { moveMember, removeMember } from "@/backend/lib/candidates/positions";
 import { loadRecruitmentConfig } from "@/backend/lib/candidates/requisitions";
+import { stageNotification } from "@/backend/lib/candidates/outreach-settings";
+import type { StageNotification } from "@/backend/lib/candidates/types";
 import { loadStages } from "@/backend/lib/candidates/stages";
 
 import { actorFor, errorResponse, rateLimited, readJson, requireCandidateAccess, UUID } from "../../../../_lib/auth";
@@ -26,13 +28,13 @@ export async function PATCH(request: Request, { params }: Params) {
   try {
     const by = await actorFor(auth.admin, auth.user);
     const member = await moveMember(auth.admin, auth.orgId, by, id, memberId, body.stage, body.remark);
-    let rejectionEmail: { templateId: string } | null = null;
+    let notification: StageNotification | null = null;
     try {
-      const [{ stages }, config] = await Promise.all([loadStages(auth.admin, auth.orgId), loadRecruitmentConfig(auth.admin, auth.orgId)]);
-      const templateId = config.outreach.rejectionEmailTemplateId;
-      if (templateId && stages.find((s) => s.key === member.stage)?.kind === "rejected") rejectionEmail = { templateId };
-    } catch { /* the offer is a convenience */ }
-    return NextResponse.json({ member, rejectionEmail });
+      const [list, config] = await Promise.all([loadStages(auth.admin, auth.orgId), loadRecruitmentConfig(auth.admin, auth.orgId)]);
+      const stage = list.stages.find((s) => s.key === member.stage);
+      if (stage) notification = stageNotification(stage, list.source !== "legacy", config.outreach.rejectionEmailTemplateId);
+    } catch { /* The stage move is already saved. */ }
+    return NextResponse.json({ member, notification });
   } catch (error) {
     return errorResponse(error, "Couldn't move the candidate");
   }

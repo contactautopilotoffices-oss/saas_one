@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { requireControlCentre } from '../_shared/adminGuard';
-import { AI_MODELS, AI_JOBS, MAX_CHAIN, isAiJob, modelStatus } from '@/task-manager/ai/aiCatalog';
+import { AI_MODELS, AI_JOBS, MAX_CHAIN, isAiJob, isHrModelGroup, jobInfo, modelStatus } from '@/task-manager/ai/aiCatalog';
 import { aiModelsOverview, keyReady, saveChain, testModel } from '@/task-manager/ai/AiModelSettings';
 import { inventoryWithStatus } from '@/task-manager/ai/aiInventory';
 
@@ -19,12 +19,16 @@ export async function GET(request: NextRequest) {
         const guard = await requireControlCentre(request.nextUrl.searchParams.get('orgId') || '');
         if (!guard.ok) return guard.response;
         const overview = await aiModelsOverview();
+        const hr = request.nextUrl.searchParams.get('scope') === 'hr';
+        const jobs = overview.jobs.filter(job => isHrModelGroup(job.group) === hr);
+        const catalog = AI_JOBS.filter(job => isHrModelGroup(job.group) === hr);
         const ready = (p: Parameters<typeof keyReady>[0], j: Parameters<typeof keyReady>[1]) => keyReady(p, j);
         const models = AI_MODELS.map(m => ({
             ...m,
-            status: Object.fromEntries(AI_JOBS.map(j => [j.key, modelStatus(j.key, m.id, ready)])),
+            status: Object.fromEntries(catalog.map(j => [j.key, modelStatus(j.key, m.id, ready)])),
         }));
-        return NextResponse.json({ success: true, ...overview, models, maxChain: MAX_CHAIN, inventory: inventoryWithStatus() });
+        const inventory = inventoryWithStatus().filter(item => (item.area === 'HR') === hr);
+        return NextResponse.json({ success: true, ...overview, jobs, models, maxChain: MAX_CHAIN, inventory });
     } catch (err) {
         console.error('[AiModelsAPI] GET error:', err);
         return NextResponse.json({ success: false, error: 'Could not load the AI model settings' }, { status: 500 });
@@ -37,6 +41,8 @@ export async function POST(request: NextRequest) {
         if (!guard.ok) return guard.response;
         const body = (await request.json().catch(() => null)) ?? {};
         if (!isAiJob(body.job)) return NextResponse.json({ success: false, error: 'Unknown job' }, { status: 400 });
+        const hr = request.nextUrl.searchParams.get('scope') === 'hr';
+        if (isHrModelGroup(jobInfo(body.job)?.group) !== hr) return NextResponse.json({ success: false, error: 'Open the model settings for this department.' }, { status: 400 });
 
         if (body.action === 'save') {
             const models = body.models === null ? null : Array.isArray(body.models) ? body.models.filter((m: unknown): m is string => typeof m === 'string') : undefined;

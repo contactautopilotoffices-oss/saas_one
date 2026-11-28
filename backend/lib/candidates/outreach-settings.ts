@@ -5,6 +5,8 @@
  * under `outreach`. This file is pure (no database): parsing, defaults, validation and filling in the placeholders.
  */
 import { z } from "zod";
+import { isSelectionStage, type StageDef } from "./stage-list";
+import type { StageNotification } from "./types";
 
 // The job application form ----------------------------------------------------------------------------------------------
 
@@ -191,7 +193,24 @@ export const OFFER_TEMPLATES: OutreachTemplate[] = [
   },
 ];
 
-export const DEFAULT_TEMPLATES: OutreachTemplate[] = [...BASE_TEMPLATES, ...FLOW_TEMPLATES, ...OFFER_TEMPLATES];
+export const SELECTION_EMAIL: OutreachTemplate = {
+  id: "email_selection",
+  name: "Selection update",
+  channel: "email",
+  subject: "Your application for {{role}} at {{company}}",
+  body: "Hello {{first_name}},\n\nThank you for your time so far. We are pleased to let you know that you are moving forward in the recruitment process for the {{role}} role at {{company}}. Our recruitment team will share the next steps with you.\n\nRegards,\n{{company}} Recruitment Team",
+};
+
+export function stageNotification(stage: StageDef, whatsappSupported: boolean, rejectionEmailTemplateId: string | null): StageNotification | null {
+  const selected = isSelectionStage(stage);
+  const whatsapp = whatsappSupported && (stage.whatsapp || selected);
+  const emailTemplateId = stage.kind === "rejected"
+    ? rejectionEmailTemplateId || null
+    : selected || (stage.kind === "progress" && stage.whatsapp) ? SELECTION_EMAIL.id : null;
+  return whatsapp || emailTemplateId ? { whatsapp, emailTemplateId } : null;
+}
+
+export const DEFAULT_TEMPLATES: OutreachTemplate[] = [...BASE_TEMPLATES, ...FLOW_TEMPLATES, ...OFFER_TEMPLATES, SELECTION_EMAIL];
 
 // Assignments, documents and offers (owner 2026-11-24) ---------------------------------------------------------------------
 

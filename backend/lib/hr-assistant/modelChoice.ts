@@ -1,6 +1,6 @@
 /**
  * Owner 2026-11-15: which models the HR assistant's planner and answer steps try, when someone has chosen them in the
- * Tech console (Brain → AI models). The chosen models are tried first, in the saved order; today's list (config.ts)
+ * Tech console (HR Configs → HR AI models). The chosen models are tried first, in the saved order; today's list (config.ts)
  * always follows, so a choice can never leave the assistant without a model. Nothing chosen = today's list, unchanged.
  *
  * The SAFETY CHECK is deliberately not configurable: it runs on a dedicated safeguard model and fails closed

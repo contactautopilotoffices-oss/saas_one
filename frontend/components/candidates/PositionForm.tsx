@@ -157,16 +157,17 @@ export default function PositionForm({ open, orgId, seed, position, draft, jdLin
         if (!res.ok) { notify(res.error, 'error'); if (res.noAccess) reportError(res); return; }
         const d = res.data.draft;
         const filled = toForm(d);
+        const hasExperience = d.expMinYears !== null || d.expMaxYears !== null;
         setF(s => ({
             ...s,
             title: filled.title || s.title, department: filled.department || s.department, designation: filled.designation || s.designation, location: filled.location || s.location,
             employmentType: filled.employmentType || s.employmentType, openings: d.openings ? filled.openings : s.openings,
             education: filled.education || s.education, budgetMin: filled.budgetMin || s.budgetMin, budgetMax: filled.budgetMax || s.budgetMax, summary: filled.summary || s.summary,
-            expMin: filled.expMin || s.expMin, expMax: filled.expMax || s.expMax, noticeMax: filled.noticeMax || s.noticeMax,
+            expMin: hasExperience ? filled.expMin : s.expMin, expMax: hasExperience ? filled.expMax : s.expMax, noticeMax: filled.noticeMax || s.noticeMax,
             mustHaves: filled.mustHaves.length ? filled.mustHaves : s.mustHaves, niceToHaves: filled.niceToHaves || s.niceToHaves, tools: filled.tools || s.tools,
             prefer: d.prefer, jdText: d.jdText, jdFileName: d.jdFileName ?? s.jdFileName,
         }));
-        setNotice(res.data.notices[0] ?? (res.data.aiParsed ? 'Filled in from the JD. Check every field before saving.' : ''));
+        setNotice(res.data.notices.join(' ') || (res.data.aiParsed ? 'Filled in from the JD. Check every field before saving.' : ''));
         setJdOpen(false);
         if (res.data.aiParsed) notify('Filled in from the JD. Check every field.', 'success');
     };

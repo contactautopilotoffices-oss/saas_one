@@ -4,6 +4,7 @@
  * (the senders are fakes: owner rule, no WhatsApp sends in tests).
  */
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { after, before, describe, it } from "node:test";
 
 import type { PGlite } from "@electric-sql/pglite";
@@ -15,9 +16,10 @@ import {
   cancelCampaign, campaignSends, createAutoCampaign, createCampaign, getCampaign, previewCampaign, processCampaign, type CampaignSenders,
 } from "../../backend/lib/candidates/outreach-campaigns";
 import {
-  DEFAULT_APPLICATION_FORM, DEFAULT_OUTREACH, fillTemplate, toOutreachSettings, validateOutreachSettings, whatsappParams, type OutreachSettings,
+  DEFAULT_APPLICATION_FORM, DEFAULT_OUTREACH, fillTemplate, stageNotification, toOutreachSettings, validateOutreachSettings, whatsappParams, type OutreachSettings,
 } from "../../backend/lib/candidates/outreach-settings";
-import { createPosition, listMembers } from "../../backend/lib/candidates/positions";
+import { addMembers, createPosition, listMembers, moveMember } from "../../backend/lib/candidates/positions";
+import { DEFAULT_STAGES, findStage } from "../../backend/lib/candidates/stage-list";
 import { createRecord, getRecord } from "../../backend/lib/candidates/records";
 import { loadRecruitmentConfig, saveOutreachSettings, saveRecruitmentConfig } from "../../backend/lib/candidates/requisitions";
 
@@ -162,6 +164,36 @@ describe("job application form and outreach", () => {
     // The link sent is the one her form opens.
     const token = first.templateParams[3].split("/apply/")[1];
     assert.equal((await publicForm(client, token))?.firstName, "Neha");
+  });
+
+  it("offers both channels for selection and rejection and respects stage configuration", () => {
+    const options = (key: string, configured = "email_rejection") => stageNotification(findStage(DEFAULT_STAGES, key)!, true, configured);
+    assert.deepEqual(options("l1_select"), { whatsapp: true, emailTemplateId: "email_selection" });
+    assert.deepEqual(options("director_pending"), { whatsapp: true, emailTemplateId: "email_selection" });
+    assert.deepEqual(options("final_reject", "email_custom_rejection"), { whatsapp: true, emailTemplateId: "email_custom_rejection" });
+    assert.deepEqual(options("final_reject", ""), { whatsapp: true, emailTemplateId: null });
+    assert.equal(options("sourced"), null);
+  });
+
+  it("sends a selection email from the connected mailbox and blocks an outdated decision", async () => {
+    const record = await add({ fullName: "Meera Nair", email: "meera@example.com" });
+    await addMembers(client, ORG, ME, positionId, [record.id]);
+    const member = (await listMembers(client, ORG, positionId)).find(m => m.candidateId === record.candidateId)!;
+    await moveMember(client, ORG, ME, positionId, member.id, "final_select", null);
+    await db.exec(readFileSync("supabase/migrations/20261122000002_recruitment_mail.sql", "utf8"));
+    await db.exec(readFileSync("supabase/migrations/20261122000003_recruitment_email.sql", "utf8"));
+    await db.query("insert into public.candidate_resume_mail_connections (organization_id, address, addresses, refresh_token_enc, dc, can_send) values ($1, 'hr@example.com', array['hr@example.com'], 'mock', 'in', true)", [ORG]);
+    const input = { applicationIds: [record.id], positionId, emailTemplateId: "email_selection" };
+    await assert.rejects(createCampaign(client, ORG, ME, { ...input, expectedStage: "l1_select" }), /stage changed/);
+    const campaign = await createCampaign(client, ORG, ME, { ...input, expectedStage: "final_select" });
+    const sent: string[] = [];
+    await processCampaign(client, ORG, campaign.id, { ...senders, async email(message) {
+      sent.push(message.body);
+      return { messageId: "mock-mail-1", threadId: null, from: "hr@example.com" };
+    } });
+    assert.deepEqual(campaign.channels, ["email"]);
+    assert.equal((await getCampaign(client, ORG, campaign.id)).counts.sent, 1);
+    assert.match(sent[0], /moving forward.*Senior Graphic Designer/);
   });
 
   it("stops a send, and runs automatic outreach for an approved request within working hours", async () => {

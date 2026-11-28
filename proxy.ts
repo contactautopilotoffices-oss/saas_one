@@ -48,6 +48,7 @@ const DASHBOARD_MODULES = new Set([
     'book-room',
     'crm',
     'flow-map',
+    'hiring-requests',
     'hr-assistant',
     'hr-tickets',
     'meera',
@@ -126,7 +127,8 @@ export async function proxy(request: NextRequest) {
     if (pathSegments.length >= 1 && UUID_REGEX.test(pathSegments[0])) {
         const orgId = pathSegments[0];
         const moduleName = pathSegments[1];
-        if (moduleName && DASHBOARD_MODULES.has(moduleName)) {
+        // Keep the explicit organisation on client navigation to a hiring request, including property-only staff.
+        if (moduleName && DASHBOARD_MODULES.has(moduleName) && !(isClientRsc && moduleName === 'hiring-requests')) {
             const rest = '/' + pathSegments.slice(1).join('/');
             if (isClientRsc) {
                 const rewriteUrl = request.nextUrl.clone();

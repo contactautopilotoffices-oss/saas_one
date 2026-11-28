@@ -17,13 +17,13 @@ import { useAuth } from '@/frontend/context/AuthContext';
  */
 
 const answers = new Map<string, Promise<boolean>>();
-function canRaise(orgId: string): Promise<boolean> {
-    let p = answers.get(orgId);
+function canRaise(orgId: string, key: string): Promise<boolean> {
+    let p = answers.get(key);
     if (!p) {
         p = fetch(`/api/recruitment/can-raise?orgId=${encodeURIComponent(orgId)}`, { cache: 'no-store' })
             .then(async res => { if (!res.ok) return false; const body = await res.json(); return Boolean(body?.canOpen ?? body?.canRaise); })
-            .catch(() => { answers.delete(orgId); return false; });
-        answers.set(orgId, p);
+            .catch(() => { answers.delete(key); return false; });
+        answers.set(key, p);
     }
     return p;
 }
@@ -31,17 +31,19 @@ function canRaise(orgId: string): Promise<boolean> {
 export default function HiringRequestsNavLink({ onNavigate, compact = false, rail = false }: { onNavigate?: () => void; compact?: boolean; rail?: boolean } = {}) {
     const pathname = usePathname();
     const params = useParams();
-    const { membership } = useAuth();
+    const { membership, user } = useAuth();
     // Owner 2026-11-21: in every login but the tenant's; a property-only login (no organisation role) uses its property's organisation.
-    const org = (typeof params?.orgId === 'string' ? params.orgId : '') || membership?.org_id || membership?.properties?.find(p => p.organization_id)?.organization_id || '';
-    const [shown, setShown] = useState<{ org: string; yes: boolean } | null>(null);
+    const property = membership?.properties?.find(p => p.id === params?.propertyId);
+    const org = (typeof params?.orgId === 'string' ? params.orgId : '') || property?.organization_id || membership?.org_id || membership?.properties?.find(p => p.organization_id)?.organization_id || '';
+    const key = user?.id && org ? `${user.id}:${org}` : '';
+    const [shown, setShown] = useState<{ key: string; yes: boolean } | null>(null);
     useEffect(() => {
-        if (!org) return;
+        if (!key) return;
         let live = true;
-        void canRaise(org).then(yes => { if (live) setShown({ org, yes }); });
+        void canRaise(org, key).then(yes => { if (live) setShown({ key, yes }); });
         return () => { live = false; };
-    }, [org]);
-    if (!org || shown?.org !== org || !shown.yes) return null;
+    }, [org, key]);
+    if (!key || shown?.key !== key || !shown.yes) return null;
 
     const active = !!pathname && /\/hiring-requests(\/|$)/.test(pathname);
     return (

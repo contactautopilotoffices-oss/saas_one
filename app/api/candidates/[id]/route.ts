@@ -19,13 +19,22 @@ type Params = { params: Promise<{ id: string }> };
 const notFound = () => NextResponse.json({ error: "Not found" }, { status: 404 });
 
 export async function GET(request: Request, { params }: Params) {
-  const auth = await requireCandidateAccess(new URL(request.url).searchParams.get("orgId"));
+  const query = new URL(request.url).searchParams;
+  const auth = await requireCandidateAccess(query.get("orgId"));
   if (auth.error) return auth.error;
   const { id } = await params;
   if (!UUID.test(id)) return notFound();
   try {
     // With the resume fields and "has a resume" (owner 2026-11-11): the candidate's panel opens from any list.
-    const record = await getFullRecord(auth.admin, auth.orgId, id);
+    let recordId = id;
+    if (query.get("by") === "candidate") {
+      const { data, error } = await auth.admin.from("candidate_records").select("id").eq("organization_id", auth.orgId)
+        .eq("candidate_id", id).is("deleted_at", null).eq("sheet_live", true).order("updated_at", { ascending: false }).order("id").limit(1).maybeSingle();
+      if (error) throw error;
+      if (!data) return notFound();
+      recordId = data.id;
+    }
+    const record = await getFullRecord(auth.admin, auth.orgId, recordId);
     record.trackerValues = await savedTrackerValues(auth.admin, auth.orgId, record.id, record.sheetId);
     return NextResponse.json({ record });
   } catch (error) {

@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { Archive, CircleAlert, CircleCheck, Download, FileCheck, FileText, Folder, FolderDown, FolderOpen, Link2, ScanText, Square, SquareCheck, Trash2, Upload, X } from 'lucide-react';
+import { Archive, CircleAlert, CircleCheck, Download, FileCheck, FileText, Folder, FolderDown, FolderOpen, Link2, RefreshCw, ScanText, Square, SquareCheck, Trash2, Upload, X } from 'lucide-react';
 import {
     MATCH_REASON_LABELS, SOURCE_KIND_LABELS, SOURCE_KINDS, TEXT_STATUS_LABELS,
     type CandidateRecord, type PreparedUpload, type ResumeConfirmResponse, type ResumeFile, type ResumeFilesResponse, type ResumeLinksResponse, type ResumeManifestResponse, type ResumeRepeat, type ResumeSummary, type SourceKind, type UploadSource,
@@ -11,8 +11,9 @@ import { resumeSourceLabel, sourceFromResumeName } from '@/backend/lib/candidate
 import Skeleton from '@/frontend/components/ui/Skeleton';
 import { api, qs } from './api';
 import CandidatePicker from './CandidatePicker';
+import { useCandidateProfile } from './useCandidateProfile';
 import ResumeMail from './ResumeMail';
-import { canRememberFolder, ensureReadable, folderAllowed, forgetFolder, isBrave, listFolderFiles, loadFolder, pickFolder } from './folder-store';
+import { canRememberFolder, ensureReadable, forgetFolder, listFolderFiles, loadFolder, pickFolder } from './folder-store';
 import { formatCount, formatDate } from './format';
 import { Avatar, Dialog, Spinner, Toggle, useUi } from './ui';
 import {
@@ -95,37 +96,42 @@ function ResumeSourceFields({ value, onChange, label, disabled, automatic = fals
     </div>;
 }
 
-/**
- * "Already in the database" (owner 2026-11-16: its own section under Team uploads, not tags in the list). A second CV
- * for a person who already had one: HR updates the CV (this file becomes the CV, the earlier one is kept as an older
- * version) or deletes the copy. A CV that only meets its own sheet row never shows here. Below those, the SAME file
- * uploaded again by someone else (not stored twice): who uploaded it first and who again, with Dismiss only.
- */
 function DuplicatesPanel({ orgId, reloadKey, onChanged }: { orgId: string; reloadKey: number; onChanged: () => void }) {
     const { notify, reportError } = useUi();
+    const [visible, setVisible] = useState(false);
+    const [filePage, setFilePage] = useState(1);
+    const [repeatPage, setRepeatPage] = useState(1);
+    const [confirmClear, setConfirmClear] = useState(false);
+    const [loadError, setLoadError] = useState('');
     const [state, setState] = useState<{ files: ResumeFile[]; total: number } | null>(null);
     const [nonce, setNonce] = useState(0);
+    const [loadedPages, setLoadedPages] = useState({ files: 1, repeats: 1 });
     const [busy, setBusy] = useState<string | null>(null);
     const [confirm, setConfirm] = useState<string | null>(null);
     const [repeats, setRepeats] = useState<{ repeats: ResumeRepeat[]; total: number }>({ repeats: [], total: 0 });
     useEffect(() => {
         const ctrl = new AbortController();
         void Promise.all([
-            api<ResumeFilesResponse>(`/api/candidates/resumes${qs({ orgId, link: 'duplicate', pageSize: 20 })}`, { signal: ctrl.signal }),
-            api<{ repeats: ResumeRepeat[]; total: number }>(`/api/candidates/resumes/repeats${qs({ orgId })}`, { signal: ctrl.signal }),
+            api<ResumeFilesResponse>(`/api/candidates/resumes${qs({ orgId, link: 'duplicate', pageSize: 20, page: filePage })}`, { signal: ctrl.signal }),
+            api<{ repeats: ResumeRepeat[]; total: number }>(`/api/candidates/resumes/repeats${qs({ orgId, page: repeatPage })}`, { signal: ctrl.signal }),
         ]).then(([res, rep]) => {
             if (ctrl.signal.aborted) return;
-            setState(res.ok ? { files: res.data.files, total: res.data.total } : { files: [], total: 0 });
-            setRepeats(rep.ok ? rep.data : { repeats: [], total: 0 });
+            if (!res.ok || !rep.ok) { setLoadError(!res.ok ? res.error : !rep.ok ? rep.error : ''); return; }
+            setLoadError('');
+            if (filePage > 1 && !res.data.files.length) setFilePage(page => Math.max(1, Math.min(page, Math.ceil(res.data.total / 20))));
+            if (repeatPage > 1 && !rep.data.repeats.length) setRepeatPage(page => Math.max(1, Math.min(page, Math.ceil(rep.data.total / 20))));
+            setState({ files: res.data.files, total: res.data.total });
+            setRepeats(rep.data);
+            setLoadedPages({ files: filePage, repeats: repeatPage });
         });
         return () => ctrl.abort();
-    }, [orgId, reloadKey, nonce]);
+    }, [orgId, reloadKey, nonce, filePage, repeatPage]);
     const dismiss = async (r: ResumeRepeat) => {
         setBusy(r.id);
         const res = await api<{ ok: true }>('/api/candidates/resumes/repeats', { json: { orgId, id: r.id } });
         setBusy(null);
         if (!res.ok) { notify(res.error, 'error'); if (res.noAccess) reportError(res); return; }
-        setRepeats(cur => ({ repeats: cur.repeats.filter(x => x.id !== r.id), total: Math.max(0, cur.total - 1) }));
+        setNonce(n => n + 1);
     };
     const count = (state?.total ?? 0) + repeats.total;
     const open = (id: string) => window.open(`/api/candidates/resumes/${encodeURIComponent(id)}${qs({ orgId, inline: true })}`, '_blank', 'noopener');
@@ -139,20 +145,55 @@ function DuplicatesPanel({ orgId, reloadKey, onChanged }: { orgId: string; reloa
         setNonce(n => n + 1);
         onChanged();
     };
-    return (
-        <section className={`${K_CARD} px-4 py-4`} aria-labelledby="resume-dupes-heading">
-            <div className="flex items-center justify-between gap-x-2">
-                <h2 id="resume-dupes-heading" className="flex items-center gap-x-2 text-[15px] font-semibold text-text-primary">
-                    Already in the database
-                    {state && count > 0 && <StatusPill tone="amber"><span className="tabular-nums">{formatCount(count)}</span></StatusPill>}
-                </h2>
+    const clear = async () => {
+        setBusy('clear');
+        const res = await api<{ ok: true }>('/api/candidates/resumes/repeats', { json: { orgId, action: 'clear' } });
+        setBusy(null);
+        setConfirmClear(false);
+        setFilePage(1);
+        setRepeatPage(1);
+        setNonce(n => n + 1);
+        if (!res.ok) { notify(res.error, 'error'); if (res.noAccess) reportError(res); return; }
+        notify('Duplicate review lists cleared', 'success');
+        onChanged();
+    };
+    const paging = loadedPages.files !== filePage || loadedPages.repeats !== repeatPage;
+    const pagination = (page: number, total: number, setPage: (page: number) => void) => total > 20 && (
+        <div className="flex flex-wrap items-center justify-between gap-2 border-t border-border py-2 text-xs text-text-secondary">
+            <span>{(page - 1) * 20 + 1}–{Math.min(page * 20, total)} of {formatCount(total)}</span>
+            <div className="flex gap-1">
+                <button type="button" disabled={page <= 1 || !!busy || paging} onClick={() => setPage(page - 1)} className={K_BTN_GHOST}>Previous</button>
+                <button type="button" disabled={page * 20 >= total || !!busy || paging} onClick={() => setPage(page + 1)} className={K_BTN_GHOST}>Next</button>
             </div>
-            {!state ? (
+        </div>
+    );
+    return (
+        <>
+            <section className={`${K_CARD} flex flex-wrap items-center justify-between gap-2 px-4 py-3`} aria-label="Resume duplicate review">
+                <div className="flex flex-wrap items-center gap-2">
+                    <h2 className="text-sm font-semibold text-text-primary">Resume duplicate review</h2>
+                    {state && <StatusPill tone={count ? 'amber' : 'grey'}>{formatCount(count)}</StatusPill>}
+                </div>
+                <button type="button" onClick={() => setVisible(true)} className={K_BTN}>View duplicates</button>
+            </section>
+            <Dialog open={visible} onClose={() => { if (!busy) { setVisible(false); setConfirmClear(false); setConfirm(null); } }} size="lg"
+                labelId="resume-duplicates-title" title="Resume duplicate review"
+                footer={confirmClear ? <>
+                    <button type="button" onClick={() => setConfirmClear(false)} disabled={!!busy} className={K_BTN_GHOST}>Cancel</button>
+                    <button type="button" onClick={() => void clear()} disabled={!!busy} className={K_BTN_PRIMARY}>{busy && <Spinner />}Clear both lists</button>
+                </> : <>
+                    <button type="button" onClick={() => { setVisible(false); setConfirm(null); }} disabled={!!busy} className={K_BTN_GHOST}>Close</button>
+                    <button type="button" onClick={() => setConfirmClear(true)} disabled={!!busy || !count || !!loadError} className={K_BTN}>Clear lists</button>
+                </>}>
+            {confirmClear && <p role="status" className={`${K_WELL} mb-3 px-3 py-2 text-sm`}>Clear every pending entry from both lists? Uploaded files and candidate history are preserved.</p>}
+            {loadError && <p role="alert" className="text-sm text-error">{loadError} <button type="button" onClick={() => setNonce(n => n + 1)} className="underline">Retry</button></p>}
+            <h3 className={K_LABEL}>Already in the database {state && <span className="ml-1">{formatCount(state.total)}</span>}</h3>
+            {!state || paging ? (
                 <div className="mt-3 space-y-2">{[0, 1].map(i => <Skeleton key={i} className="h-12 w-full rounded-lg" />)}</div>
-            ) : state.files.length === 0 && repeats.repeats.length === 0 ? (
-                <p className="mt-2 text-sm text-text-secondary">Nothing here. When someone uploads a CV for a person who already has one, or a CV a teammate already uploaded, it shows here.</p>
+            ) : state.total === 0 ? (
+                <p className="mt-2 text-sm text-text-secondary">No new CVs waiting for review.</p>
             ) : state.files.length === 0 ? null : (
-                <ul className="mt-2 max-h-[420px] divide-y divide-border overflow-y-auto">
+                <ul className="mt-2 divide-y divide-border">
                     {state.files.map(f => {
                         const k = f.alreadyKnown;
                         return (
@@ -176,13 +217,13 @@ function DuplicatesPanel({ orgId, reloadKey, onChanged }: { orgId: string; reloa
                                     {confirm === f.id ? (
                                         <>
                                             <span className="text-xs text-text-secondary">Delete this copy?</span>
-                                            <button type="button" onClick={() => void act(f, 'delete')} disabled={busy === f.id} className={K_BTN_GHOST_DANGER}>{busy === f.id ? <Spinner /> : 'Delete'}</button>
+                                            <button type="button" onClick={() => void act(f, 'delete')} disabled={!!busy} className={K_BTN_GHOST_DANGER}>{busy === f.id ? <Spinner /> : 'Delete'}</button>
                                             <button type="button" onClick={() => setConfirm(null)} className={K_BTN_GHOST}>Keep</button>
                                         </>
                                     ) : (
                                         <>
-                                            <button type="button" onClick={() => void act(f, 'update')} disabled={busy === f.id} className={K_BTN} title="Use this file as the CV from now on; the earlier one stays as an older version">{busy === f.id ? <Spinner /> : 'Update the CV'}</button>
-                                            <button type="button" onClick={() => setConfirm(f.id)} disabled={busy === f.id} className={K_BTN_GHOST_DANGER}>Delete this copy</button>
+                                            <button type="button" onClick={() => void act(f, 'update')} disabled={!!busy} className={K_BTN} title="Use this file as the CV from now on; the earlier one stays as an older version">{busy === f.id ? <Spinner /> : 'Update the CV'}</button>
+                                            <button type="button" onClick={() => setConfirm(f.id)} disabled={!!busy} className={K_BTN_GHOST_DANGER}>Delete this copy</button>
                                         </>
                                     )}
                                 </div>
@@ -191,11 +232,11 @@ function DuplicatesPanel({ orgId, reloadKey, onChanged }: { orgId: string; reloa
                     })}
                 </ul>
             )}
-            {state && state.total > state.files.length && <p className="mt-2 text-xs text-text-tertiary">Showing {formatCount(state.files.length)} of {formatCount(state.total)}. Deal with these and the rest move up.</p>}
-            {state && repeats.repeats.length > 0 && (
-                <div className={state.files.length ? 'mt-3 border-t border-border pt-3' : 'mt-2'}>
-                    <h3 className={K_LABEL}>Same CV uploaded again</h3>
-                    <ul className="mt-1 max-h-[320px] divide-y divide-border overflow-y-auto">
+            {state && pagination(filePage, state.total, setFilePage)}
+            <div className="mt-3 border-t border-border pt-3">
+                <h3 className={K_LABEL}>Same CV uploaded again {state && <span className="ml-1">{formatCount(repeats.total)}</span>}</h3>
+                {state && !paging && (repeats.total === 0 ? <p className="mt-2 text-sm text-text-secondary">No repeated uploads waiting for review.</p> : (
+                    <ul className="mt-1 divide-y divide-border">
                         {repeats.repeats.map(r => (
                             <li key={r.id} className="py-3">
                                 {/* Owner 2026-11-17: who uploaded it again and who first, each on its own row. */}
@@ -205,7 +246,7 @@ function DuplicatesPanel({ orgId, reloadKey, onChanged }: { orgId: string; reloa
                                         <span className="block truncate text-sm font-semibold text-text-primary" title={r.candidateName ?? r.fileName}>{r.candidateName ?? 'Not linked to a candidate'}</span>
                                         <button type="button" onClick={() => open(r.fileId)} title={`Open ${r.fileName}`} className="block max-w-full truncate text-left text-xs font-medium text-primary-dark underline-offset-2 hover:underline">{r.fileName}</button>
                                     </span>
-                                    <button type="button" onClick={() => void dismiss(r)} disabled={busy === r.id} className={K_BTN_GHOST} title="Seen: take it off this list (the note in the person's history stays)">{busy === r.id ? <Spinner /> : 'Dismiss'}</button>
+                                    <button type="button" onClick={() => void dismiss(r)} disabled={!!busy} className={K_BTN_GHOST} title="Seen: take it off this list (the note in the person's history stays)">{busy === r.id ? <Spinner /> : 'Dismiss'}</button>
                                 </div>
                                 <dl className="mt-2 grid grid-cols-[auto_minmax(0,1fr)_auto] items-baseline gap-x-3 gap-y-1 text-xs">
                                     <dt className="text-text-secondary">Uploaded again</dt>
@@ -219,17 +260,14 @@ function DuplicatesPanel({ orgId, reloadKey, onChanged }: { orgId: string; reloa
                             </li>
                         ))}
                     </ul>
-                    {repeats.total > repeats.repeats.length && <p className="mt-2 text-xs text-text-tertiary">Showing {formatCount(repeats.repeats.length)} of {formatCount(repeats.total)}.</p>}
-                </div>
-            )}
-        </section>
+                ))}
+                {pagination(repeatPage, repeats.total, setRepeatPage)}
+            </div>
+            </Dialog>
+        </>
     );
 }
-/**
- * The folder "Upload new resumes" reads (owner 2026-11-11: chosen once, shown by name, changeable). `allowed`: the
- * browser will read it without asking. `unsupported`: this browser cannot keep a folder (Firefox, Safari, Brave as shipped).
- */
-type Source = { state: 'unknown' | 'none' | 'unsupported' } | { state: 'remembered'; name: string; allowed: boolean };
+type Source = { state: 'unknown' | 'none' | 'unsupported' } | { state: 'remembered'; name: string };
 type LinkFilter = '' | 'linked' | 'unlinked' | 'rejected' | 'other' | 'attention' | 'duplicate' | 'reading';
 type Loaded = { key: string; data: ResumeFilesResponse | null; error: string };
 
@@ -237,8 +275,9 @@ type Loaded = { key: string; data: ResumeFilesResponse | null; error: string };
 const awaitingRead = (f: ResumeFile) => !f.removed && !f.other && (['pending', 'working', 'scan', 'scanning'].includes(f.textStatus) || (f.textStatus === 'ready' && ['pending', 'working'].includes(f.extractStatus)));
 
 function TextStatus({ f }: { f: ResumeFile }) {
+    const [now] = useState(Date.now);
     if (f.extractError === 'Reading cancelled by recruiter') return <span className="text-text-secondary">Reading cancelled</span>;
-    if (awaitingRead(f) && Date.now() - new Date(f.createdAt).getTime() > 86400000) return <span className="text-amber-700" title={f.extractError || f.textError || undefined}>Reading delayed · open or cancel</span>;
+    if (awaitingRead(f) && now - new Date(f.createdAt).getTime() > 86_400_000) return <span className="text-amber-700" title={f.extractError || f.textError || undefined}>Reading delayed · open or cancel</span>;
     if (f.removed) return <span className="text-amber-700 dark:text-amber-400" title={f.textError ?? undefined}>Removed: not a resume</span>;
     if (f.other) return <span className="text-text-secondary" title={f.textError ?? undefined}>Other document (kept)</span>;
     const bad = f.textStatus === 'unreadable' || f.textStatus === 'failed';
@@ -379,8 +418,10 @@ function attentionOf(f: ResumeFile): { kind: string; why: string } {
     return { kind: 'Could not be read', why: f.textError ?? 'The text of this file could not be read.' };
 }
 
-export default function ResumesView({ orgId, readingRequest = 0 }: { orgId: string; readingRequest?: number }) {
-    const [workspace, setWorkspace] = useState<'library' | 'import' | 'attention'>('library');
+export default function ResumesView({ orgId, readingRequest = 0, importRequest = 0, onDataChanged }: { orgId: string; readingRequest?: number; importRequest?: number; onDataChanged?: () => void }) {
+    const [workspace, setWorkspace] = useState<'library' | 'import' | 'attention'>(importRequest ? 'import' : 'library');
+    const [seenImportRequest, setSeenImportRequest] = useState(importRequest);
+    if (seenImportRequest !== importRequest) { setSeenImportRequest(importRequest); setWorkspace('import'); }
     const { notify, reportError } = useUi();
     const mounted = useRef(true);
     useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
@@ -463,33 +504,26 @@ export default function ResumesView({ orgId, readingRequest = 0 }: { orgId: stri
         void (async (): Promise<Source> => {
             if (!canRememberFolder()) return { state: 'unsupported' };
             const handle = await loadFolder();
-            return handle ? { state: 'remembered', name: handle.name, allowed: await folderAllowed(handle) } : { state: 'none' };
+            return handle ? { state: 'remembered', name: handle.name } : { state: 'none' };
         })().then(next => { if (live) setSource(next); });
         return () => { live = false; };
     }, []);
     const [scanning, setScanning] = useState(false);
-    /**
-     * Owner 2026-11-12: with no source folder set, the button opens the ordinary folder window, in every browser. That
-     * window accepts Downloads (the newer folder picker refuses it: "contains system files"), and the upload of what is
-     * new is shown for review. With a source folder set, that folder is read with no window.
-     */
-    const uploadNew = async () => {
-        if (uploading || scanning) return;
-        // Decided from what is on screen, with nothing awaited first: a file window only opens straight from a click.
-        if (source.state !== 'remembered') { folderInput.current?.click(); return; }
+    const syncSource = async () => {
+        if (uploading || scanning || source.state !== 'remembered') return;
         setScanning(true);
         try {
             const handle = await loadFolder();
             if (!handle) {
                 setSource({ state: 'none' });
-                notify('The source folder is no longer remembered. Click Upload new resumes again to pick the folder.', 'info');
+                notify('The source folder is no longer remembered. Choose the source folder again to sync it.', 'info');
                 return;
             }
             if (!(await ensureReadable(handle))) {
-                notify(`The browser did not allow reading ${handle.name}. Allow it, or use Forget to pick the folder each time.`, 'info');
+                notify(`The browser did not allow reading ${handle.name}. Allow it, or choose another source folder.`, 'info');
                 return;
             }
-            setSource({ state: 'remembered', name: handle.name, allowed: true });
+            setSource({ state: 'remembered', name: handle.name });
             const found = await listFolderFiles(handle);
             takeFiles(found.map(({ file, folder }) => ({ key: `${folder}/${file.name}|${file.size}|${file.lastModified}`, file, folder })));
         } catch (e) {
@@ -498,14 +532,14 @@ export default function ResumesView({ orgId, readingRequest = 0 }: { orgId: stri
             if (mounted.current) setScanning(false);
         }
     };
-    const forgetThisFolder = async () => { await forgetFolder(); setSource({ state: 'none' }); notify('Source folder forgotten; the next upload asks for it again', 'info'); };
+    const forgetThisFolder = async () => { await forgetFolder(); setSource({ state: 'none' }); notify('Source folder forgotten', 'info'); };
     /** "Choose folder" / "Change": the browser's folder window, once. Nothing is uploaded by this. */
     const chooseSource = async () => {
         if (uploading || scanning) return;
         try {
             const handle = await pickFolder();
             if (!handle || !mounted.current) return;
-            setSource({ state: 'remembered', name: handle.name, allowed: true });
+            setSource({ state: 'remembered', name: handle.name });
             notify(`${handle.name} is the source folder now`, 'success');
         } catch (e) {
             notify(e instanceof Error && e.message ? e.message : 'Could not open the folder', 'error');
@@ -521,7 +555,7 @@ export default function ResumesView({ orgId, readingRequest = 0 }: { orgId: stri
         if (uploading || scanning) return;
         // A dropped folder arrives as an entry with no size and no type: only real files are taken.
         const dropped = Array.from(e.dataTransfer.files).filter(file => file.size > 0);
-        if (!dropped.length) { notify('Drop PDF or Word files; for a whole folder use Upload new resumes', 'info'); return; }
+        if (!dropped.length) { notify('Drop PDF or Word files; for a whole folder use Bulk upload folder', 'info'); return; }
         takeFiles(dropped.map(file => ({ key: `${file.name}|${file.size}|${file.lastModified}`, file, folder: null })));
     };
     const tick = (key: string, on: boolean) => setOverrides(o => ({ ...o, [key]: on }));
@@ -538,6 +572,7 @@ export default function ResumesView({ orgId, readingRequest = 0 }: { orgId: stri
     /** Bumped after an upload or a delete so the list and the summary below refetch. */
     const [nonce, setNonce] = useState(0);
     const reloadLibrary = () => setNonce(n => n + 1);
+    const profile = useCandidateProfile(orgId, () => { reloadLibrary(); onDataChanged?.(); });
 
     const startUpload = async (files: Picked[]) => {
         if (!files.length || uploading) return;
@@ -967,7 +1002,7 @@ export default function ResumesView({ orgId, readingRequest = 0 }: { orgId: stri
                 sub={summary ? `${formatCount(summary.total)} ${summary.total === 1 ? 'file' : 'files'} stored · ${formatCount(summary.linked)} linked to a candidate${team.length ? ` · from ${formatCount(team.length)} ${team.length === 1 ? 'person' : 'people'}` : ''}` : 'Loading'}
                 actions={<>
                     <a href={`/api/candidates/resumes/export${qs(listParams)}`} className={K_BTN} download><Download className="h-4 w-4" aria-hidden />Download Excel</a>
-                    <button type="button" onClick={() => { setWorkspace('import'); void uploadNew(); }} disabled={uploading || scanning} className={K_BTN_PRIMARY}>{scanning ? <Spinner className="h-4 w-4 text-white" /> : <Upload className="h-4 w-4" aria-hidden />}Upload resumes</button>
+                    {workspace !== 'import' && <button type="button" onClick={() => setWorkspace('import')} className={K_BTN_PRIMARY}><Upload className="h-4 w-4" aria-hidden />Upload resumes</button>}
                 </>} />
             {summary && (
                 <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4" role="group" aria-label="Resumes at a glance">
@@ -978,8 +1013,9 @@ export default function ResumesView({ orgId, readingRequest = 0 }: { orgId: stri
                 </div>
             )}
             <Segmented label="Resume workspace" value={workspace} onChange={setWorkspace} options={[{ value: 'library', label: 'Resume library' }, { value: 'import', label: 'Import & sources' }, { value: 'attention', label: `Needs attention${attentionCount ? ` · ${attentionCount}` : ''}` }]} />
+            <DuplicatesPanel orgId={orgId} reloadKey={nonce} onChanged={reloadLibrary} />
+            {profile.drawer}
             <div hidden={workspace !== 'import'} className="space-y-5">
-            <ResumeMail orgId={orgId} onImported={reloadLibrary} />
             <div className="grid items-start gap-x-4 gap-y-4 xl:grid-cols-[minmax(0,1fr)_340px]">
             {/* Add resumes */}
             <section className={`${K_CARD} px-4 py-4 sm:px-5 sm:py-5`} aria-labelledby="resume-add-heading">
@@ -1001,78 +1037,38 @@ export default function ResumesView({ orgId, readingRequest = 0 }: { orgId: stri
                     )}
                 </div>
 
-                {/* Source folder (owner 2026-11-11): chosen once, shown here, read on every "Upload new resumes". */}
-                <div className="mt-4 flex flex-wrap items-center justify-between gap-x-4 gap-y-3 rounded-lg bg-surface-elevated px-4 py-3 ring-1 ring-inset ring-border">
-                    <div className="flex min-w-0 flex-1 basis-72 items-start gap-x-3">
-                        <span className="mt-0.5 inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary"><Folder className="h-4 w-4" aria-hidden /></span>
-                        <div className="min-w-0">
-                            <p className={K_LABEL}>Source folder (optional)</p>
-                            {source.state === 'remembered' ? (
-                                <p className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-sm">
-                                    <span className="truncate font-semibold text-text-primary" title={source.name}>{source.name}</span>
-                                    <StatusPill tone={source.allowed ? 'green' : 'grey'} title={source.allowed ? 'The browser reads this folder without asking' : 'On the next upload the browser asks once whether this page may read the folder'}>
-                                        {source.allowed ? 'Ready' : 'Browser will ask to allow'}
-                                    </StatusPill>
-                                </p>
-                            ) : source.state === 'none' ? (
-                                <p className="mt-0.5 text-sm font-semibold text-text-primary">Not set: the folder is asked for on each upload</p>
-                            ) : source.state === 'unsupported' ? (
-                                <p className="mt-0.5 text-sm font-semibold text-text-primary">Not available in this browser</p>
-                            ) : (
-                                <Skeleton className="mt-1 h-4 w-40 rounded" />
-                            )}
-                            <p className="mt-0.5 text-xs leading-relaxed text-text-secondary">
-                                {source.state === 'remembered' ? (
-                                    <>
-                                        Upload new resumes reads this folder and the folders inside it, and previews the files downloaded since {formatDate(new Date(startOfDay(pickRange.from) ?? 0).toISOString())}. No file window opens.
-                                        {!source.allowed && <> When the browser asks, choose &ldquo;Allow on every visit&rdquo; and it stops asking.</>}
-                                    </>
-                                ) : source.state === 'none' ? (
-                                    <>Upload new resumes opens the folder window, and Downloads can be picked there. To skip that window, choose a folder inside Downloads here, such as a Resumes folder. The browser does not let a page remember Downloads itself.</>
-                                ) : source.state === 'unsupported' ? (
-                                    isBrave()
-                                        ? <>Upload new resumes opens the folder window each time, and Downloads can be picked there. To keep a folder selected, open <span className="font-semibold text-text-primary">brave://flags</span>, turn on &ldquo;File System Access API&rdquo; and restart Brave, or use Chrome or Edge.</>
-                                        : <>Upload new resumes opens the folder window each time, and Downloads can be picked there. Chrome and Edge can keep a folder inside Downloads selected.</>
-                                ) : (
-                                    <>Checking which folder this browser remembers.</>
-                                )}
-                            </p>
-                        </div>
+                <div onDragOver={e => { e.preventDefault(); if (!uploading && !scanning) setDropping(true); }}
+                    onDragLeave={() => setDropping(false)} onDrop={onDrop}
+                    className={`mt-4 grid gap-3 rounded-xl border border-dashed p-4 sm:grid-cols-2 ${dropping ? 'border-primary bg-primary/[.06]' : 'border-border bg-surface-elevated'}`}>
+                    <div className="rounded-lg bg-surface p-3 ring-1 ring-inset ring-border">
+                        <button type="button" onClick={() => folderInput.current?.click()} disabled={uploading || scanning} className={K_BTN_PRIMARY}><FolderDown className="h-4 w-4" />Bulk upload folder</button>
+                        <p className="mt-2 text-sm text-text-secondary">Select a folder and review its resumes together.</p>
                     </div>
-                    {(source.state === 'remembered' || source.state === 'none') && (
-                        <div className="flex shrink-0 flex-wrap items-center gap-x-2 gap-y-2">
-                            <button type="button" onClick={() => void chooseSource()} disabled={uploading || scanning} className={K_BTN}>
-                                <FolderOpen className="h-4 w-4" />{source.state === 'remembered' ? 'Change' : 'Choose folder'}
-                            </button>
-                            {source.state === 'remembered' && <button type="button" onClick={() => void forgetThisFolder()} disabled={uploading || scanning} className={K_BTN_GHOST}>Forget</button>}
-                        </div>
-                    )}
+                    <div className="rounded-lg bg-surface p-3 ring-1 ring-inset ring-border">
+                        <button type="button" onClick={() => filesInput.current?.click()} disabled={uploading || scanning} className={K_BTN}><FileText className="h-4 w-4" />Upload resume files</button>
+                        <p className="mt-2 text-sm text-text-secondary">{dropping ? 'Drop the files to review them.' : 'Select or drop individual PDF or Word files here.'}</p>
+                    </div>
                 </div>
 
-                <div
-                    onDragOver={e => { e.preventDefault(); if (!uploading && !scanning) setDropping(true); }}
-                    onDragLeave={() => setDropping(false)}
-                    onDrop={onDrop}
-                    className={`mt-4 flex flex-wrap items-center justify-between gap-x-4 gap-y-3 rounded-xl border-2 border-dashed px-4 py-4 transition-colors ${dropping ? 'border-primary bg-primary/[.06]' : 'border-border bg-surface'}`}
-                >
-                    <div className="flex min-w-0 flex-1 basis-64 items-center gap-x-3">
-                        <span className="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-primary/10 text-primary"><Upload className="h-5 w-5" aria-hidden /></span>
+                <div className="mt-3 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-border bg-surface px-3 py-3">
+                    <div className="flex min-w-0 items-center gap-3">
+                        <Folder className="h-5 w-5 shrink-0 text-primary" aria-hidden />
                         <div className="min-w-0">
-                            <p className="text-sm font-semibold text-text-primary">{dropping ? 'Drop the files to review them' : 'Drop PDF or Word files here'}</p>
-                            <p className="mt-0.5 text-xs leading-relaxed text-text-secondary">
-                                {source.state === 'remembered'
-                                    ? 'Or click Upload new resumes: it reads the source folder for you to review.'
-                                    : 'Or click Upload new resumes and pick your Downloads folder: review the files downloaded since your last upload before sending them.'}
-                                {' '}Keep this tab open while it uploads.
-                            </p>
+                            <p className={K_LABEL}>Saved source folder</p>
+                            <p className="truncate text-sm text-text-secondary">{source.state === 'remembered' ? source.name
+                                : source.state === 'unsupported' ? 'Saving folders requires a supported browser such as Chrome or Edge.'
+                                : source.state === 'none' ? 'Choose a folder to sync files for review.' : 'Checking for a saved folder…'}</p>
                         </div>
                     </div>
-                    <div className="flex flex-wrap items-center gap-x-2 gap-y-2">
-                        <button type="button" onClick={() => void uploadNew()} disabled={uploading || scanning} className={K_BTN_PRIMARY}>
-                            {scanning ? <Spinner className="h-4 w-4 text-white" /> : <FolderDown className="h-4 w-4" />}{scanning ? 'Reading the folder' : 'Upload new resumes'}
+                    {(source.state === 'remembered' || source.state === 'none') && <div className="flex flex-wrap gap-2">
+                        {source.state === 'remembered' && <button type="button" onClick={() => void syncSource()} disabled={uploading || scanning} className={K_BTN}>
+                            {scanning ? <Spinner /> : <RefreshCw className="h-4 w-4" />}{scanning ? 'Reading folder…' : 'Sync folder'}
+                        </button>}
+                        <button type="button" onClick={() => void chooseSource()} disabled={uploading || scanning} className={K_BTN_GHOST}>
+                            <FolderOpen className="h-4 w-4" />{source.state === 'remembered' ? 'Change folder' : 'Choose source folder'}
                         </button>
-                        <button type="button" onClick={() => filesInput.current?.click()} disabled={uploading || scanning} className={K_BTN_GHOST}><FileText className="h-4 w-4" />Choose files</button>
-                    </div>
+                        {source.state === 'remembered' && <button type="button" onClick={() => void forgetThisFolder()} disabled={uploading || scanning} className={K_BTN_GHOST}>Forget</button>}
+                    </div>}
                 </div>
 
                 <div className="mt-3 flex flex-wrap items-center gap-x-2 gap-y-2 text-sm text-text-secondary">
@@ -1246,11 +1242,10 @@ export default function ResumesView({ orgId, readingRequest = 0 }: { orgId: stri
                     </ul>
                 )}
             </section>
-            {/* Owner 2026-11-16: second CVs wait here, not as tags in the list below. */}
-            <DuplicatesPanel orgId={orgId} reloadKey={nonce} onChanged={reloadLibrary} />
             </div>
             </div>
 
+            <ResumeMail orgId={orgId} onImported={reloadLibrary} />
             {/* How far the background reading is */}
             </div>
             <div hidden={workspace !== 'attention'} className="space-y-4">
@@ -1494,8 +1489,10 @@ export default function ResumesView({ orgId, readingRequest = 0 }: { orgId: stri
                                                     <p className="truncate text-xs text-text-secondary" title={f.folderPath ?? undefined}>{fmtSize(f.fileSize)}{f.downloadedAt ? ` · downloaded ${formatDate(f.downloadedAt)}` : ''}{f.folderPath ? ` · ${f.folderPath}` : ''}</p>
                                                 </td>
                                                 <td className={`${K_TD} max-w-[260px]`}>
-                                                    {f.candidateName
-                                                        ? <span className="flex items-center gap-x-2"><Avatar name={f.candidateName} size="sm" /><span className="truncate font-semibold text-text-primary underline-offset-2" title={f.matchReason ? `Matched by ${MATCH_REASON_LABELS[f.matchReason].toLowerCase()}` : undefined}>{f.candidateName}</span></span>
+                                                    {f.candidateName && f.candidateId && !f.removed
+                                                        ? <button type="button" onClick={() => void profile.show(f.candidateId!, true)} className="flex max-w-full items-center gap-x-2 text-left hover:underline" title={f.matchReason ? `Matched by ${MATCH_REASON_LABELS[f.matchReason].toLowerCase()}` : undefined}>
+                                                            <Avatar name={f.candidateName} size="sm" /><span className="truncate font-semibold text-text-primary">{f.candidateName}</span>
+                                                        </button>
                                                         : f.removed || f.other ? <span className="text-text-tertiary">—</span>
                                                         : <span className="block text-xs leading-snug text-text-secondary">Not linked · no record with this email or phone</span>}
                                                 </td>

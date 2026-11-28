@@ -96,6 +96,7 @@ export const MAX_QUERY_LENGTH = 4000;
 export const MAX_JD_LENGTH = 20_000;
 /** An uploaded JD file (PDF, Word or text): 5 MB is far past any real one. */
 export const MAX_JD_BYTES = 5 * 1024 * 1024;
+export const MAX_REQUISITION_JD_BYTES = 4 * 1024 * 1024;
 
 /** Records the search hands to the ranker: about 3 x N, at least 20, at most 45 (one prompt stays small and fast). */
 export function comparePoolSize(topN: number): number {

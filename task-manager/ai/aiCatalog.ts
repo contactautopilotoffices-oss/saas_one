@@ -158,7 +158,7 @@ export const AI_JOBS: readonly JobInfo[] = [
     { key: 'duplicate_check', label: 'Duplicate task check', hint: 'Asks whether a new task means the same work as an open one', group: 'Other', needs: 'chat', providers: CHAT_PROVIDERS, defaults: ['qwen3.8-27b', 'glm-5.3-flash'] },
     // 2026-11-02: 'superuser_chat' retired (Smart chat answers superusers); kept in the AiJob type so old settings still read.
     { key: 'learning_loop', label: 'Learning loop', hint: 'Review summaries and nightly draft instructions (admin only)', group: 'Other', needs: 'chat', providers: CHAT_PROVIDERS, defaults: ['anthropic:claude-sonnet-5-5', 'gemini-3.8-flash', 'gemini-2.5-flash', 'glm-5.3-flash'] },
-    { key: 'candidate_parse', label: 'Reading the search', hint: 'Turns an HR request or job description into filters (experience, notice, salary, location)', group: 'Candidate Search', needs: 'chat', providers: CHAT_PROVIDERS, defaults: CANDIDATE_DEFAULT },
+    { key: 'candidate_parse', label: 'Reading searches, JDs and remarks', hint: 'Extracts search filters and position details from job descriptions, reads scanned JDs with a PDF-capable model, and formats candidate remarks', group: 'Candidate Search', needs: 'chat', providers: CHAT_PROVIDERS, defaults: CANDIDATE_DEFAULT },
     { key: 'candidate_rank', label: 'Ranking candidates', hint: 'Scores the shortlisted records against the request and explains each pick', group: 'Candidate Search', needs: 'chat', providers: CHAT_PROVIDERS, defaults: CANDIDATE_DEFAULT },
     { key: 'candidate_fix', label: 'Fixing flagged rows', hint: 'Suggests corrected values for sheet rows with problems; HR approves each change', group: 'Candidate Search', needs: 'chat', providers: CHAT_PROVIDERS, defaults: CANDIDATE_FIX_DEFAULT },
     { key: 'candidate_suggest', label: 'Suggesting keywords', hint: 'Offers related search terms under the keyword box as soon as it answers; the number of candidates who have each term is filled in beside it afterwards', group: 'Candidate Search', needs: 'chat', providers: CHAT_PROVIDERS, defaults: CANDIDATE_SUGGEST_DEFAULT },
@@ -172,8 +172,8 @@ export const AI_JOBS: readonly JobInfo[] = [
     // ── Owner 2026-11-15: the rest of the application (Brain → AI models) ──
     // `providers` is the provider each job's own code calls; `defaults` is the model it had on 2026-11-15.
     { key: 'assistant_interpret', label: 'Reading the message', hint: 'The older WhatsApp assistant (meeting rooms and tickets): works out what the person wants', group: 'WhatsApp assistant', needs: 'chat', providers: ['groq'], defaults: ['groq:llama-3.3-70b-versatile'], single: true, defaultEnv: 'GROQ_TASK_CHAT_MODEL', defaultPrefix: 'groq:' },
-    { key: 'hr_plan', label: 'Working out the question', hint: 'HR assistant: decides what to look up in the HR policies. The first model that answers is used; the rest are backups', group: 'HR', needs: 'chat', providers: ['groq', 'engy'], defaults: ['groq:openai/gpt-oss-20b', 'qwen3.8-27b', 'glm-5.3-flash'] },
-    { key: 'hr_answer', label: 'Writing the answer', hint: 'HR assistant: writes the answer from the HR policies it found. The first model that answers is used; the rest are backups', group: 'HR', needs: 'chat', providers: ['groq', 'engy'], defaults: ['groq:openai/gpt-oss-20b', 'qwen3.8-27b', 'glm-5.3-flash'] },
+    { key: 'hr_plan', label: 'Otto — Working out the question', hint: 'Decides what to look up in the HR policies. The first model that answers is used; the rest are backups', group: 'HR', needs: 'chat', providers: ['groq', 'engy'], defaults: ['groq:openai/gpt-oss-20b', 'qwen3.8-27b', 'glm-5.3-flash'] },
+    { key: 'hr_answer', label: 'Otto — Writing the answer', hint: 'Writes the answer from the HR policies it found. The first model that answers is used; the rest are backups', group: 'HR', needs: 'chat', providers: ['groq', 'engy'], defaults: ['groq:openai/gpt-oss-20b', 'qwen3.8-27b', 'glm-5.3-flash'] },
     { key: 'wiki_answer', label: 'Wiki answers', hint: 'Answers a question from the organisation wiki (also what the brain\'s knowledge skill uses)', group: 'Documents', needs: 'chat', providers: ['engy'], defaults: ['deepseek-v4-flash-0731'], single: true, defaultEnv: 'WIKI_MODEL' },
     { key: 'document_ocr', label: 'Reading uploaded documents', hint: 'Document Bank: reads the details out of an uploaded document or picture', group: 'Documents', needs: 'vision', providers: ['groq'], defaults: ['groq:qwen/qwen3.8-27b'], single: true },
     { key: 'invoice_text', label: 'Reading invoices from text', hint: 'Reads supplier, amounts and line items out of an invoice PDF that has text in it', group: 'Finance', needs: 'chat', providers: ['engy'], defaults: ['deepseek-v4-flash-0731'], single: true, defaultEnv: 'INVOICE_EXTRACT_MODEL' },
@@ -205,6 +205,7 @@ export const AI_JOBS: readonly JobInfo[] = [
 export const rawModelId = (id: string): string => id.replace(/^(?:groq|openai|anthropic):/, '');
 
 export const jobInfo = (job: AiJob): JobInfo | undefined => AI_JOBS.find(j => j.key === job);
+export const isHrModelGroup = (group?: string) => group === 'HR' || group === 'Candidate Search';
 export const modelInfo = (id: string): ModelInfo | undefined => AI_MODELS.find(m => m.id === id);
 export const isAiJob = (s: unknown): s is AiJob => typeof s === 'string' && AI_JOBS.some(j => j.key === s);
 

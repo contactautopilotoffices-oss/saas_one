@@ -5,7 +5,7 @@ import {
 } from "@/backend/lib/candidates/assignments";
 import { audit } from "@/backend/lib/candidates/audit";
 import { WRITE_RATE_LIMIT } from "@/backend/lib/candidates/config";
-import { getRecord } from "@/backend/lib/candidates/records";
+import { CandidateActionError, getRecord } from "@/backend/lib/candidates/records";
 
 import { actorFor, errorResponse, rateLimited, readJson, requireCandidateAccess, UUID } from "../_lib/auth";
 
@@ -91,10 +91,18 @@ export async function POST(request: Request) {
         const positionId = typeof body.positionId === "string" && UUID.test(body.positionId) ? body.positionId : null;
         return NextResponse.json(await requestDocuments(admin, orgId, by, { candidateId: record.candidateId, applicationId: record.id, positionId }));
       }
-      case "review_document":
+      case "review_document": {
         if (!id) break;
-        await reviewDocument(admin, orgId, by, id, body.status, body.note);
+        const review = await reviewDocument(admin, orgId, by, id, body.status, body.note, body.uploadedAt);
+        if (body.status === "rejected") {
+          try {
+            return NextResponse.json(await requestDocuments(admin, orgId, by, { ...review, applicationId: null }));
+          } catch (error) {
+            return NextResponse.json({ sent: false, note: error instanceof CandidateActionError ? error.message : "The change request was saved. Share the candidate’s document link to notify them." });
+          }
+        }
         return NextResponse.json({ ok: true });
+      }
       case "document_file":
         if (!id) break;
         await audit(admin, orgId, by, { action: "document_view", entityType: "document", entityId: id });

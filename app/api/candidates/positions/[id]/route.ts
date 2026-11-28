@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 
 import { WRITE_RATE_LIMIT } from "@/backend/lib/candidates/config";
 import { linkPositionJd } from "@/backend/lib/candidates/jd-library";
-import { deletePosition, getPosition, updatePosition } from "@/backend/lib/candidates/positions";
+import { deletePosition, getPosition, memberScores, updatePosition } from "@/backend/lib/candidates/positions";
 import { notifyRecruiterAssigned } from "@/backend/lib/candidates/requisition-notify";
 
 import { loadApproverPools } from "../../../recruitment/_lib/people";
@@ -17,12 +17,17 @@ const notFound = () => NextResponse.json({ error: "Not found" }, { status: 404 }
 
 /** One position with its job description. Query: orgId. */
 export async function GET(request: Request, { params }: Params) {
-  const auth = await requireCandidateAccess(new URL(request.url).searchParams.get("orgId"));
+  const query = new URL(request.url).searchParams;
+  const auth = await requireCandidateAccess(query.get("orgId"));
   if (auth.error) return auth.error;
   const { id } = await params;
   if (!UUID.test(id)) return notFound();
   try {
-    return NextResponse.json({ position: await getPosition(auth.admin, auth.orgId, id) });
+    const position = await getPosition(auth.admin, auth.orgId, id);
+    const candidateId = query.get("candidateId");
+    if (!candidateId || !UUID.test(candidateId)) return NextResponse.json({ position });
+    const scores = await memberScores(auth.admin, auth.orgId, id, [candidateId]);
+    return NextResponse.json({ position, score: scores.get(candidateId) ?? null });
   } catch (error) {
     return errorResponse(error, "Couldn't load the position");
   }

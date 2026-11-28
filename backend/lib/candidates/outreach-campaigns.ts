@@ -22,7 +22,7 @@ import { personalLink, systemActor } from "./applications";
 import { filterRecords } from "./filter-search";
 import { EMPTY_FILTERS, type SearchFilters } from "./filters";
 import { parseEmail, parsePhone } from "./normalize";
-import { fillTemplate, whatsappParams, type OutreachSettings, type OutreachTemplate, type PlaceholderValues } from "./outreach-settings";
+import { fillTemplate, whatsappParams, type OutreachSettings, type OutreachTemplate, type PlaceholderValues, SELECTION_EMAIL } from "./outreach-settings";
 import { withinSendingHours } from "./outreach";
 import { CandidateActionError, getRecordRows } from "./records";
 import { loadRecruitmentConfig } from "./requisitions";
@@ -87,6 +87,7 @@ const CreateInput = z.object({
   whatsappTemplateId: z.string().nullish(),
   emailTemplateId: z.string().nullish(),
   mailConnectionId: z.string().regex(UUID).nullish(),
+  expectedStage: z.string().min(1).max(80).optional(),
 });
 
 export interface CampaignSummary {
@@ -98,7 +99,7 @@ export interface CampaignSummary {
 
 const templateOf = (s: OutreachSettings, id: string | null | undefined, channel: "whatsapp" | "email"): OutreachTemplate | null => {
   if (!id) return null;
-  const t = s.templates.find((x) => x.id === id && x.channel === channel);
+  const t = s.templates.find((x) => x.id === id && x.channel === channel) ?? (channel === "email" && id === SELECTION_EMAIL.id ? SELECTION_EMAIL : null);
   if (!t) throw new CandidateActionError(400, `That ${channel === "whatsapp" ? "WhatsApp" : "email"} template no longer exists. Pick another one.`);
   return t;
 };
@@ -130,6 +131,14 @@ export async function createCampaign(client: SupabaseClient, orgId: string, by: 
   const byCandidate = new Map<string, string>();
   for (const r of rows as unknown as { id: string; candidate_id: string }[]) if (!byCandidate.has(r.candidate_id)) byCandidate.set(r.candidate_id, r.id);
   if (!byCandidate.size) throw new CandidateActionError(400, "None of those candidates exist any more.");
+  if (input.expectedStage !== undefined) {
+    const candidateId = byCandidate.keys().next().value;
+    if (byCandidate.size !== 1 || !input.positionId) throw new CandidateActionError(400, "Choose one candidate and position for a stage update.");
+    const { data, error } = await client.from("candidate_position_members").select("stage").eq("organization_id", orgId)
+      .eq("position_id", input.positionId).eq("candidate_id", candidateId).is("deleted_at", null).maybeSingle();
+    if (error) fail("check the stage", error);
+    if (data?.stage !== input.expectedStage) throw new CandidateActionError(409, "The candidate's stage changed. Close this update and check the pipeline.");
+  }
   const channels = [...(wa ? ["whatsapp" as const] : []), ...(em ? ["email" as const] : [])];
 
   const { data: created, error } = await client.from(CAMPAIGNS).insert({

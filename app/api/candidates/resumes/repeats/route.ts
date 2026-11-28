@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 
 import { RESUME_RATE_LIMIT, WRITE_RATE_LIMIT } from "@/backend/lib/candidates/config";
-import { dismissRepeat, listRepeats } from "@/backend/lib/candidates/resumes";
+import { clearDuplicateReview, dismissRepeat, listRepeats } from "@/backend/lib/candidates/resumes";
 
 import { errorResponse, rateLimited, readJson, requireCandidateAccess } from "../../_lib/auth";
 
@@ -18,7 +18,8 @@ export async function GET(request: Request) {
   const limited = rateLimited("resumes", auth.user.id, RESUME_RATE_LIMIT);
   if (limited) return limited;
   try {
-    return NextResponse.json(await listRepeats(auth.admin, auth.orgId));
+    const page = Math.min(100_000, Math.max(1, Math.floor(Number(params.get("page")) || 1)));
+    return NextResponse.json(await listRepeats(auth.admin, auth.orgId, 20, page));
   } catch (error) {
     return errorResponse(error, "Couldn't load the repeated uploads");
   }
@@ -32,7 +33,8 @@ export async function POST(request: Request) {
   const limited = rateLimited("write", auth.user.id, WRITE_RATE_LIMIT);
   if (limited) return limited;
   try {
-    await dismissRepeat(auth.admin, auth.orgId, auth.user.id, body.id);
+    if (body.action === "clear") await clearDuplicateReview(auth.admin, auth.orgId, auth.user.id);
+    else await dismissRepeat(auth.admin, auth.orgId, auth.user.id, body.id);
     return NextResponse.json({ ok: true });
   } catch (error) {
     return errorResponse(error, "Couldn't dismiss the entry");

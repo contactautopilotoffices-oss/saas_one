@@ -13,6 +13,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { z } from "zod";
 
+import type { RemarkBullet } from "./remark-format";
 import { CandidateActionError, getRecord, updateRecord } from "./records";
 import { BLACKLIST_REASONS, REMARK_REQUIRED_STATUSES, STATUS_LABELS, type Blacklist, type BlacklistReason, type CandidateRecord, type RecordStatus } from "./types";
 
@@ -190,13 +191,14 @@ export async function assertInPosition(client: SupabaseClient, orgId: string, ca
  * A remark on its own, from the panel's "Add remark". From the pipeline (owner 2026-11-17) it may be filed under the
  * position the panel was opened from (`positionId`), so it shows in that position's history.
  */
-export async function addRemark(client: SupabaseClient, orgId: string, by: Actor, id: string, remarkInput: unknown, positionIdInput?: unknown): Promise<void> {
+export async function addRemark(client: SupabaseClient, orgId: string, by: Actor, id: string, remarkInput: unknown, positionIdInput?: unknown, format?: (remark: string) => Promise<RemarkBullet[]>): Promise<void> {
   const remark = cleanRemark(remarkInput);
   if (!remark) throw new CandidateActionError(400, "Type the remark first.");
   const record = await getRecord(client, orgId, id);
   const positionId = positionIdInput === undefined || positionIdInput === null ? null : await assertInPosition(client, orgId, record.candidateId, positionIdInput);
   if (historyKnownMissing()) throw new CandidateActionError(409, "Remarks need a database update first (migration 20261115000002).");
-  await recordAction(client, orgId, by, { candidateId: record.candidateId, applicationId: record.id, positionId, action: "remark", remark });
+  const bullets = format ? await format(remark) : [];
+  await recordAction(client, orgId, by, { candidateId: record.candidateId, applicationId: record.id, positionId, action: "remark", remark, meta: bullets.length ? { bullets } : {} });
   if (historyKnownMissing()) throw new CandidateActionError(409, "Remarks need a database update first (migration 20261115000002).");
 }
 

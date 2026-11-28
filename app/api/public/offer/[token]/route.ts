@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 
 import { getCandidatesAdmin } from "@/backend/lib/candidates/access";
-import { defaultFlowDeps, publicOffer, respondOnPage } from "@/backend/lib/candidates/hiring";
+import { defaultFlowDeps, offerPdfDownload, publicOffer, publicOfferPdf, respondOnPage } from "@/backend/lib/candidates/hiring";
 import { CandidateActionError } from "@/backend/lib/candidates/records";
 
 import { rateLimited } from "../../../candidates/_lib/auth";
@@ -23,7 +23,12 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
   if (limited) return limited;
   const { token } = await params;
   try {
-    const page = await publicOffer(getCandidatesAdmin(), token);
+    const admin = getCandidatesAdmin();
+    if (request.nextUrl.searchParams.get("download") === "letter") {
+      const file = await publicOfferPdf(admin, token);
+      return file ? offerPdfDownload(file) : NextResponse.json({ error: "This offer has no PDF available." }, { status: 404, headers: noStore });
+    }
+    const page = await publicOffer(admin, token);
     if (!page) return NextResponse.json({ error: "This letter is not open." }, { status: 404, headers: noStore });
     return NextResponse.json(page, { headers: noStore });
   } catch (error) {

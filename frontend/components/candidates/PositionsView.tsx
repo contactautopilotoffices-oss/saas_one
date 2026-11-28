@@ -234,7 +234,7 @@ export default function PositionsView({ orgId, dataVersion, onDataChanged, onSea
         if (!res.ok) { notify(res.error, 'error'); if (res.noAccess) reportError(res); return; }
         const d = res.data.draft;
         if (!res.data.aiParsed) notify(res.data.notices[0] ?? 'Nothing could be read from that.', 'error');
-        else if (res.data.notices[0]) notify(res.data.notices[0], 'info');
+        else if (res.data.notices.length) notify(res.data.notices.join(' '), 'info');
         // The draft is handed over as a seed the form turns into fields; the form itself can read the JD again.
         setForm({
             open: true,

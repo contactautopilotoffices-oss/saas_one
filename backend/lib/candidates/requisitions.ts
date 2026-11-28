@@ -47,7 +47,7 @@ const APPROVALS = "recruitment_requisition_approvals";
 const SETTINGS = "organization_settings";
 const COLUMNS =
   "id, requisition_no, status, current_level, current_approver_id, level_entered_at, role_title, department, location, positions, request_type, replacing_name, " +
-  "budget_min_ctc, budget_max_ctc, required_skills, min_experience_years, qualification, target_joining_date, justification, reporting_manager, internal_mobility, structure_note, role_is_new, in_plan, needs_director, " +
+  "budget_min_ctc, budget_max_ctc, required_skills, min_experience_years, max_experience_years, jd_file_name, requested_in_plan, qualification, target_joining_date, justification, reporting_manager, internal_mobility, structure_note, role_is_new, in_plan, needs_director, " +
   "hold_since, hold_reason, decided_at, decision_reason, position_id, raised_by, raised_by_name, submitted_at, created_at, updated_at";
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 /** Stage 2: 3 working days end to end (Monday to Saturday count, as the module's sending hours do). */
@@ -64,6 +64,12 @@ const missingRelation = (error: { code?: string; message?: string } | null | und
   Boolean(error) && (["42P01", "42703", "PGRST205", "PGRST204"].includes(error?.code ?? "") || /recruitment_requisition|recruitment_config|does not exist|schema cache/i.test(error?.message ?? ""));
 
 function fail(what: string, error: { code?: string; message?: string }): never {
+  if (error.code === "23514" && /recruitment_requisitions_experience_range/.test(error.message ?? "")) {
+    throw new CandidateActionError(400, "Maximum experience must be at least the minimum.");
+  }
+  if (/requested_in_plan|max_experience_years|jd_file_name|jd_text|jd_pdf_base64/.test(error.message ?? "")) {
+    throw new CandidateActionError(503, "Hiring requests need database migration 20261128000001_hiring_request_details.sql.");
+  }
   // Before 20261124000001: the new columns are missing, or the checks refuse the department head's level.
   if (/internal_mobility|structure_note|role_is_new/.test(error.message ?? "") || (error.code === "23514" && /current_level_check|approvals_level_check/.test(error.message ?? ""))) {
     throw new CandidateActionError(503, REQUISITION_HOD_MIGRATION_MESSAGE);
@@ -217,10 +223,10 @@ export function resolveHierarchy(config: RecruitmentConfig, employeeMaster: Recr
  * Others"): the department is one of the list's, and the role title one of that department's designations, unless the
  * role was raised under "Others". Nothing is checked when the list is empty.
  */
-export function checkAgainstHierarchy(hierarchy: RequisitionHierarchy | undefined, row: Record<string, unknown>): string | null {
+export function checkAgainstHierarchy(hierarchy: RequisitionHierarchy | undefined, row: Record<string, unknown>, departmentLocked = false): string | null {
   if (!hierarchy?.departments.length) return null;
   const dept = hierarchy.departments.find((d) => d.department.toLowerCase() === clean(row.department, 80).toLowerCase());
-  if (!dept) return "Pick the department from the list.";
+  if (!dept) return departmentLocked ? null : "Pick the department from the list.";
   if (row.role_is_new === true || !dept.designations.length) return null;
   const role = clean(row.role_title, 120).toLowerCase();
   if (!dept.designations.some((d) => d.toLowerCase() === role)) return `Pick the role from ${dept.department}'s designations, or choose "Others" to raise a new one.`;
@@ -680,6 +686,9 @@ function toRequisition(row: Record<string, unknown>, names: Map<string, string |
     budgetMaxCtc: num(row.budget_max_ctc),
     requiredSkills: Array.isArray(row.required_skills) ? (row.required_skills as string[]) : [],
     minExperienceYears: num(row.min_experience_years),
+    maxExperienceYears: num(row.max_experience_years),
+    jdFileName: (row.jd_file_name as string | null) ?? null,
+    requestedInPlan: (row.requested_in_plan as boolean | null) ?? null,
     qualification: (row.qualification as string | null) ?? null,
     targetJoiningDate: day(row.target_joining_date),
     justification: (row.justification as string | null) ?? null,
@@ -795,6 +804,9 @@ const FormInput = z.object({
   budgetMaxCtc: rupeesYear,
   requiredSkills: z.array(text(80)).max(30).optional(),
   minExperienceYears: z.number().min(0).max(50).nullable().optional(),
+  maxExperienceYears: z.number().min(0).max(50).nullable().optional(),
+  requestedInPlan: z.boolean().nullable().optional(),
+  removeJd: z.boolean().optional(),
   qualification: text(200).nullable().optional(),
   targetJoiningDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Pick the target joining date.").nullable().optional(),
   justification: text(4000).nullable().optional(),
@@ -827,6 +839,8 @@ function formColumns(input: RequisitionFormInput, partial: boolean): Record<stri
   set("budget_max_ctc", input.budgetMaxCtc);
   if (input.requiredSkills !== undefined || !partial) out.required_skills = (input.requiredSkills ?? []).map((s) => s.trim()).filter(Boolean);
   set("min_experience_years", input.minExperienceYears);
+  set("max_experience_years", input.maxExperienceYears);
+  set("requested_in_plan", input.requestedInPlan);
   set("qualification", blankToNull(input.qualification));
   set("target_joining_date", blankToNull(input.targetJoiningDate));
   set("justification", blankToNull(input.justification));
@@ -839,14 +853,13 @@ function formColumns(input: RequisitionFormInput, partial: boolean): Record<stri
 
 /**
  * What the form must have before it can be submitted (Stage 1's fields; the budget band is required because Stage 2
- * routes on it). Owner 2026-11-24 (23 Nov meeting): the justification and where the role sits in the structure are both
- * required, and so is the internal mobility answer.
+ * routes on it). The requester declares the headcount plan status for the HR Head to review.
  */
 function readyToSubmit(row: Record<string, unknown>): string | null {
   if (!String(row.role_title ?? "").trim()) return "Give the role a title.";
   if (row.budget_max_ctc === null || row.budget_max_ctc === undefined) return "Give the budget band (maximum CTC per year).";
   if (!String(row.justification ?? "").trim()) return "Say why the role is needed (the justification).";
-  if (!String(row.structure_note ?? "").trim()) return "Say where the role sits in the current structure.";
+  if (typeof row.requested_in_plan !== "boolean") return "Choose In plan or Out of plan.";
   if (row.internal_mobility !== true && row.internal_mobility !== false) return "Answer whether someone already in the company could fill it (internal mobility).";
   if (row.request_type === "replacement" && !String(row.replacing_name ?? "").trim()) return "Say who is being replaced.";
   return null;
@@ -873,6 +886,34 @@ export interface RequisitionDeps {
   sourceMailId?: string;
   /** Owner 2026-11-24: the form's department → designations list; given, a submitted role must come from it (or "Others"). */
   hierarchy?: RequisitionHierarchy;
+  /** undefined is for system-created email drafts; null means the signed-in requester has no assigned department. */
+  requesterDepartment?: string | null;
+  jd?: { fileName: string; text: string | null; pdfBase64: string };
+}
+
+function validateRequesterDepartment(dept: string | null | undefined, selected: unknown): void {
+  if (dept === undefined) return;
+  if (!dept) throw new CandidateActionError(400, "Your employee profile needs a department before you can raise a hiring request.");
+  if (typeof selected === "string" && selected.trim().toLowerCase() !== dept.toLowerCase()) {
+    throw new CandidateActionError(403, "You can only raise a hiring request for your own department.");
+  }
+}
+
+function checkExperience(row: Record<string, unknown>): void {
+  const min = num(row.min_experience_years);
+  const max = num(row.max_experience_years);
+  if (min !== null && max !== null && min > max) throw new CandidateActionError(400, "Maximum experience must be at least the minimum.");
+}
+
+function jdColumns(jd: RequisitionDeps["jd"], remove: boolean | undefined): Record<string, unknown> {
+  if (!jd && !remove) return {};
+  return { jd_file_name: jd?.fileName ?? null, jd_text: jd?.text ?? null, jd_pdf_base64: jd?.pdfBase64 ?? null };
+}
+
+export async function requisitionJdPdf(client: SupabaseClient, orgId: string, id: string): Promise<Uint8Array | null> {
+  const { data, error } = await client.from(TABLE).select("jd_pdf_base64").eq("organization_id", orgId).eq("id", id).is("deleted_at", null).maybeSingle();
+  if (error) fail("load the job description", error);
+  return data?.jd_pdf_base64 ? new Uint8Array(Buffer.from(data.jd_pdf_base64 as string, "base64")) : null;
 }
 
 async function emit(deps: RequisitionDeps, event: RequisitionEvent): Promise<void> {
@@ -912,8 +953,16 @@ export async function createRequisition(client: SupabaseClient, orgId: string, b
   const b = (body ?? {}) as Record<string, unknown>;
   const parsed = FormInput.safeParse(b);
   if (!parsed.success) throw new CandidateActionError(400, parsed.error.issues[0]?.message ?? "Those details are not valid.");
+  validateRequesterDepartment(deps.requesterDepartment, parsed.data.department);
+  const columns = formColumns(parsed.data, false);
+  if (deps.requesterDepartment) columns.department = deps.requesterDepartment;
+  checkExperience(columns);
+  if (b.submit === true) {
+    const problem = readyToSubmit(columns) ?? checkAgainstHierarchy(deps.hierarchy, columns, Boolean(deps.requesterDepartment));
+    if (problem) throw new CandidateActionError(400, problem);
+  }
   const now = (deps.now ?? (() => new Date()))().toISOString();
-  const { data, error } = await client.from(TABLE).insert({ organization_id: orgId, ...formColumns(parsed.data, false), status: "draft", raised_by: by.id, raised_by_name: by.name, created_at: now, updated_at: now, ...(deps.sourceMailId ? { source_mail_id: deps.sourceMailId } : {}) }).select("id").single();
+  const { data, error } = await client.from(TABLE).insert({ organization_id: orgId, ...columns, ...jdColumns(deps.jd, parsed.data.removeJd), status: "draft", raised_by: by.id, raised_by_name: by.name, created_at: now, updated_at: now, ...(deps.sourceMailId ? { source_mail_id: deps.sourceMailId } : {}) }).select("id").single();
   if (error) fail("save the request", error);
   const id = (data as { id: string }).id;
   if (b.submit === true) return submitRequisition(client, orgId, by, id, deps);
@@ -929,10 +978,12 @@ export async function updateRequisition(client: SupabaseClient, orgId: string, b
   if (row.status !== "draft" && row.status !== "sent_back") throw new CandidateActionError(409, "This request is with the approvers and cannot be changed now. Withdraw it, or wait for the decision.");
   const parsed = FormInput.partial().safeParse(b);
   if (!parsed.success) throw new CandidateActionError(400, parsed.error.issues[0]?.message ?? "Those details are not valid.");
-  const columns = formColumns(parsed.data as RequisitionFormInput, true);
+  validateRequesterDepartment(deps.requesterDepartment, parsed.data.department ?? row.department);
+  const columns = { ...formColumns(parsed.data as RequisitionFormInput, true), ...jdColumns(deps.jd, parsed.data.removeJd) };
+  if (deps.requesterDepartment) columns.department = deps.requesterDepartment;
+  checkExperience({ ...row, ...columns });
   if (Object.keys(columns).length) {
-    const { error } = await client.from(TABLE).update({ ...columns, updated_at: new Date().toISOString() }).eq("organization_id", orgId).eq("id", row.id as string);
-    if (error) fail("save the request", error);
+    await guardedUpdate(client, orgId, row, undefined, { ...columns, updated_at: new Date().toISOString() }, "save the request");
   }
   if (b.submit === true) return submitRequisition(client, orgId, by, row.id as string, deps);
   const { requisition } = await getRequisition(client, orgId, row.id as string);
@@ -962,7 +1013,9 @@ export async function submitRequisition(client: SupabaseClient, orgId: string, b
   const row = await loadRow(client, orgId, id);
   if (row.raised_by !== by.id) throw new CandidateActionError(403, "Only the person who raised the request can submit it.");
   if (row.status !== "draft" && row.status !== "sent_back") throw new CandidateActionError(409, "This request has already been submitted.");
-  const problem = readyToSubmit(row) ?? checkAgainstHierarchy(deps.hierarchy, row);
+  validateRequesterDepartment(deps.requesterDepartment, row.department);
+  if (deps.requesterDepartment && !row.department) throw new CandidateActionError(400, "Edit the request to set your department before submitting.");
+  const problem = readyToSubmit(row) ?? checkAgainstHierarchy(deps.hierarchy, row, Boolean(deps.requesterDepartment));
   if (problem) throw new CandidateActionError(400, problem);
   const config = await loadRecruitmentConfig(client, orgId);
   const first = firstLevelFor(config, by.id, row.department as string | null);
@@ -1148,6 +1201,8 @@ async function approveFinal(client: SupabaseClient, orgId: string, by: Actor, ro
 
   let positionId: string | null = null;
   try {
+    const jd = row.jd_file_name ? await client.from(TABLE).select("jd_text").eq("organization_id", orgId).eq("id", id).single() : null;
+    if (jd?.error) fail("read the job description", jd.error);
     const skills = Array.isArray(row.required_skills) ? (row.required_skills as string[]) : [];
     const band = [num(row.budget_min_ctc), num(row.budget_max_ctc)].map((v) => (v === null ? null : `₹${(v / 100_000).toLocaleString("en-IN", { maximumFractionDigits: 1 })} LPA`));
     const summary = [
@@ -1160,7 +1215,9 @@ async function approveFinal(client: SupabaseClient, orgId: string, by: Actor, ro
     const position = await createPosition(client, orgId, by, {
       title: row.role_title, department: row.department ?? null, location: row.location ?? null, openings: Number(row.positions) || 1,
       education: row.qualification ?? null, hiringManager: row.raised_by_name ?? null, targetDays: config.targetDays, summary,
-      filters: { ...EMPTY_FILTERS, keywords: skills.map((text) => ({ text, required: false })), ...(num(row.min_experience_years) !== null ? { expMin: num(row.min_experience_years) } : {}) },
+      jdText: (jd?.data?.jd_text as string | null) ?? undefined,
+      jdFileName: (row.jd_file_name as string | null) ?? undefined,
+      filters: { ...EMPTY_FILTERS, keywords: skills.map((text) => ({ text, required: false })), expMin: num(row.min_experience_years), expMax: num(row.max_experience_years) },
       // Spec A03: nobody recruits for it until HR assigns someone (the approver is not the recruiter).
       recruiterId: null,
     });
