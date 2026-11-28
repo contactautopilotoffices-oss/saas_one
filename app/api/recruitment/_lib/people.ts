@@ -22,6 +22,20 @@ export async function formHierarchy(client: SupabaseClient, orgId: string, confi
   }
 }
 
+export async function employeeDepartment(client: SupabaseClient, orgId: string, userId: string): Promise<string | null> {
+  const { data, error } = await client.from("employee_profiles").select("organization_id, department, department_ref:departments(name)")
+    .eq("user_id", userId).eq("is_active", true).or(`organization_id.eq.${orgId},organization_id.is.null`);
+  if (error) throw error;
+  const rows = (data ?? []) as unknown as { organization_id: string | null; department: string | null; department_ref: { name: string } | null }[];
+  const local = rows.filter(row => row.organization_id === orgId);
+  const names = new Map<string, string>();
+  for (const row of local.length ? local : rows) {
+    const name = row.department?.trim() || row.department_ref?.name.trim();
+    if (name) names.set(name.toLowerCase(), name);
+  }
+  return names.size === 1 ? names.values().next().value ?? null : null;
+}
+
 /**
  * Owner 2026-11-20: "You need to have the same data like the one in the task manager" — the people to pick from are the
  * Task Manager's list (active employee profiles: the same names and departments), not only the organisation's members.

@@ -30,7 +30,7 @@ export default function HiringRequestsPage({ orgId }: { orgId: string }) {
     return (
         <UiProvider value={ui}>
             <div className="mx-auto w-full max-w-6xl px-4 py-6 sm:px-6 lg:py-8">
-                <h1 className="mb-4 font-display text-xl font-black tracking-tight text-text-primary">Hiring requests</h1>
+                <h1 className="mb-6 text-2xl font-bold tracking-tight text-text-primary sm:text-3xl">Hiring requests</h1>
                 {orgId ? <><RequisitionsView orgId={orgId} mode="manager" /><HiringManagerCandidates orgId={orgId} /></> : <p className="text-sm text-text-secondary">Open this page from your organisation.</p>}
             </div>
             <ModalPortal>

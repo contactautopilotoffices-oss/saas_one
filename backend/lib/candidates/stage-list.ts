@@ -310,3 +310,7 @@ export function describeChanges(before: readonly StageDef[], after: readonly Sta
   const text = parts.join(" · ");
   return text ? text.charAt(0).toUpperCase() + text.slice(1) : "";
 }
+
+export function isSelectionStage(stage: StageDef): boolean {
+  return stage.kind === "progress" && (stage.key === "offer" || stage.key === "shortlisted" || /(?:^|_)select(?:ed)?(?:_|$)/i.test(stage.key));
+}

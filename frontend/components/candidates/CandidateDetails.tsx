@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useEffect, useId, useMemo, useRef, useState } from 'react';
-import { Ban, BookOpen, Briefcase, Building2, CalendarDays, ChevronDown, ChevronLeft, ChevronRight, ClipboardList, Clock, Download, ExternalLink, FileText, GraduationCap, History, LayoutGrid, Mail, MapPin, MoreHorizontal, Paperclip, PencilLine, Phone, PhoneCall, ScanText, School, Search, Star, Unlink } from 'lucide-react';
+import { Ban, BookOpen, Briefcase, Building2, CalendarDays, ChevronDown, ChevronLeft, ChevronRight, ClipboardList, Clock, Download, ExternalLink, FileText, GraduationCap, History, LayoutGrid, Mail, MapPin, MoreHorizontal, Paperclip, PencilLine, Phone, PhoneCall, RefreshCw, ScanText, School, Search, Star, Unlink } from 'lucide-react';
 import { DEFENCE_OPTIONS, EDUCATION_TYPES, NO_QUALIFICATION } from '@/backend/lib/candidates/filters';
 import { markKeywords } from '@/backend/lib/candidates/snippet';
 import {
@@ -15,11 +15,10 @@ import { MessageLog, RemoveDataButton } from './PrivacyControls';
 import AssessmentSender from './AssessmentSender';
 import { formatDate, formatInr, formatMonths, formatNotice, STATUS_DOT } from './format';
 import { InterviewsList } from './InterviewScheduler';
-import { OutreachSection } from './OutreachPanel';
 import { StageChip, useStages } from './stage-ui';
 import { findStage, unlistedStage } from '@/backend/lib/candidates/stage-list';
 import { PipelineStrip, PositionFitCard, type PipelineContext } from './PipelineContext';
-import { ActivityTimeline, BlacklistedTag, BTN_DANGER_FILLED, REMARK_MAX, statusNeedsRemark } from './Remarks';
+import { ActivityTimeline, BlacklistedTag, CandidateRemarks, BTN_DANGER_FILLED, REMARK_MAX, statusNeedsRemark } from './Remarks';
 import { WorkedOut } from './ResultCard';
 import ResumeDocument, { hasProfile } from './ResumeDocument';
 import { Avatar, BTN_GHOST, BTN_PRIMARY, BTN_SECONDARY, CARD, CopyButton, Drawer, EmptyState, INPUT, LABEL, OVERLAY, Spinner, Tag, useUi, WELL } from './ui';
@@ -39,7 +38,7 @@ type Files = { candidateId: string; files: ResumeFile[]; error: string };
 type Tab = 'overview' | 'resume' | 'activity' | 'positions' | 'interviews' | 'calls' | 'work';
 export type CandidateTab = Tab;
 /** The inline form open under the header, if any. */
-type Panel = null | 'status' | 'positions' | 'blacklist' | 'outreach' | 'assessment';
+type Panel = null | 'status' | 'positions' | 'blacklist' | 'assessment';
 /** The mockup's small header buttons (36 px, 13 px text). */
 const BTN_SM = 'h-9 rounded-xl px-3 text-[13px]';
 /** Reference layout (owner 2026-11-25): small square outline buttons in the header, and the "‹ ›" walkers. */
@@ -63,7 +62,7 @@ const CONTACT_PILL = 'inline-flex max-w-full items-center rounded-full bg-primar
  * A status change opens "Change status" inline: "Others" needs a remark. Nothing here changes by accident: every
  * action is a click on a named button, and every one of them is in the history.
  */
-export default function CandidateDetails({ record, open, onClose, onEdit, orgId, onChanged, keywords = [], pipeline = null, showTab = null }: {
+export default function CandidateDetails({ record, open, onClose, onEdit, orgId, onChanged, keywords = [], pipeline = null, showTab = null, positionPicker }: {
     record: CandidateRecord; open: boolean; onClose: () => void; onEdit: () => void;
     orgId: string;
     /**
@@ -73,6 +72,7 @@ export default function CandidateDetails({ record, open, onClose, onEdit, orgId,
     pipeline?: PipelineContext | null;
     /** Something changed (status, resume, blacklist, position): the lists behind the panel refetch. */
     onChanged?: () => void;
+    positionPicker?: React.ReactNode;
     /** The search's keywords, marked in the resume's text. */
     keywords?: string[];
     /** Owner 2026-11-25: open on this tab (a new nonce asks again, e.g. "Send assessment" from a pipeline card). */
@@ -82,17 +82,20 @@ export default function CandidateDetails({ record, open, onClose, onEdit, orgId,
 
     // The lists hand over a record without the resume fields or the blacklist entry: fetch the full record once per opening.
     const [full, setFull] = useState<{ id: string; record: CandidateRecord } | null>(null);
-    const needsFull = open && (record.extras === undefined || record.blacklist === undefined || record.trackerValues === undefined) && full?.id !== record.id;
+    const [refreshNonce, setRefreshNonce] = useState(0);
+    const [refreshed, setRefreshed] = useState(0);
     useEffect(() => {
-        if (!needsFull) return;
+        if (!open) return;
         const ctrl = new AbortController();
         void api<{ record: CandidateRecord }>(`/api/candidates/${encodeURIComponent(record.id)}${qs({ orgId })}`, { signal: ctrl.signal }).then(res => {
             if (ctrl.signal.aborted) return;
+            setRefreshed(refreshNonce);
             if (res.ok) setFull({ id: record.id, record: res.data.record });
             else if (res.noAccess) reportError(res);
+            else if (refreshNonce) notify(res.error, 'error');
         });
         return () => ctrl.abort();
-    }, [needsFull, record.id, orgId, reportError]);
+    }, [open, record.id, orgId, refreshNonce, notify, reportError]);
     const r: CandidateRecord = full?.id === record.id
         ? { ...record, ...full.record, keywordHits: record.keywordHits ?? full.record.keywordHits, resumeSnippet: record.resumeSnippet ?? full.record.resumeSnippet }
         : record;
@@ -112,10 +115,16 @@ export default function CandidateDetails({ record, open, onClose, onEdit, orgId,
     const [picking, setPicking] = useState(false);
     const closeForms = () => { setPanel(null); setPicking(false); };
     const goTo = (next: Tab) => { closeForms(); setTab(next); };
-    const [seenShowTab, setSeenShowTab] = useState<number | null>(null);
-    if (showTab && showTab.nonce !== seenShowTab) { setSeenShowTab(showTab.nonce); closeForms(); setTab(showTab.tab); }
-    const [seenFor, setSeenFor] = useState(`${record.id}:${open}`);
-    if (seenFor !== `${record.id}:${open}`) { setSeenFor(`${record.id}:${open}`); closeForms(); }
+    const tabRequest = showTab?.nonce ?? null;
+    const [seenTabRequest, setSeenTabRequest] = useState<number | null>(null);
+    const profileKey = `${record.id}:${open}`;
+    const [seenProfile, setSeenProfile] = useState(profileKey);
+    if (profileKey !== seenProfile || (open && showTab && tabRequest !== seenTabRequest)) {
+        setSeenProfile(profileKey);
+        closeForms();
+        setTab(open && showTab && tabRequest !== seenTabRequest ? showTab.tab : 'overview');
+        setSeenTabRequest(tabRequest);
+    }
 
     // The candidate's resume files.
     const [nonce, setNonce] = useState(0);
@@ -277,6 +286,10 @@ export default function CandidateDetails({ record, open, onClose, onEdit, orgId,
                     </dl>
                 </div>
                 <div className="ml-auto flex shrink-0 flex-wrap items-center justify-end gap-2">
+                    <button type="button" onClick={() => { setRefreshNonce(n => n + 1); setNonce(n => n + 1); setHistoryNonce(n => n + 1); setCallsNonce(n => n + 1); setMembershipNonce(n => n + 1); onChanged?.(); }}
+                        disabled={refreshed !== refreshNonce} aria-label="Refresh profile" title="Refresh profile" className={BTN_OUTLINE}>
+                        <RefreshCw className={`h-4 w-4 ${refreshed !== refreshNonce ? 'animate-spin' : ''}`} aria-hidden />
+                    </button>
                     <button type="button" onClick={() => { closeForms(); onEdit(); }} className={BTN_OUTLINE} title="Edit details"><PencilLine className="h-4 w-4" />Edit</button>
                     {/* Owner 2026-11-25: the less frequent actions in a "…" menu, each still one named button. */}
                     <OverflowMenu label="More actions">
@@ -297,12 +310,10 @@ export default function CandidateDetails({ record, open, onClose, onEdit, orgId,
                             </>
                         )}
                     </OverflowMenu>
-                    {!r.blacklisted && (
-                        <button type="button" onClick={() => { setPicking(false); setPanel(panel === 'outreach' ? null : 'outreach'); }} aria-expanded={panel === 'outreach'} className={BTN_OUTLINE} title="Tell the candidate on WhatsApp">Send update</button>
-                    )}
                     <button type="button" onClick={togglePositions} aria-expanded={positionsOpen} className={`${BTN_PRIMARY} ${BTN_SM} rounded-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50 focus-visible:ring-offset-2`}>Add to position</button>
                 </div>
             </div>
+            {positionPicker}
             {/* Section tabs as pills with an icon: the selected one dark (reference layout). */}
             <div role="tablist" aria-label="Candidate sections" className="mt-4 flex flex-wrap gap-2 pb-3.5">
                 {([['overview', 'Overview', null, LayoutGrid], ['resume', 'Resume', files.length || null, FileText], ['activity', 'Activity', null, History], ['positions', 'Positions', null, Briefcase], ['interviews', 'Interviews', null, CalendarDays], ['calls', 'Calls', null, PhoneCall], ['work', 'Assignment & documents', null, ClipboardList]] as const).map(([id, label, n, Icon]) => (
@@ -359,11 +370,8 @@ export default function CandidateDetails({ record, open, onClose, onEdit, orgId,
                     </section>
                 )}
 
-                {/* Send update on WhatsApp (owner 2026-11-16) */}
                 {panel === 'assessment' && !r.blacklisted && <AssessmentSender key={r.id} orgId={orgId} record={r} onClose={() => setPanel(null)} onSent={() => { setHistoryNonce(n => n + 1); onChanged?.(); }} />}
-                {panel === 'outreach' && !r.blacklisted && (
-                    <OutreachSection orgId={orgId} record={r} onClose={() => setPanel(null)} onSent={() => { setPanel(null); setHistoryNonce(n => n + 1); onChanged?.(); }} />
-                )}
+
 
                 {/* Blacklist */}
                 {r.blacklist && (
@@ -452,19 +460,19 @@ export default function CandidateDetails({ record, open, onClose, onEdit, orgId,
                     </>
                 )}
 
-                {tab === 'activity' && open && <ActivityTimeline orgId={orgId} record={r} nonce={historyNonce} focusNonce={focusRemark} position={pipeline ? { id: pipeline.position.id, title: pipeline.position.title } : null} />}
+                {tab === 'activity' && open && <ActivityTimeline orgId={orgId} record={r} nonce={historyNonce} focusNonce={focusRemark} position={pipeline ? { id: pipeline.position.id, title: pipeline.position.title } : null} onAdded={() => setHistoryNonce(n => n + 1)} />}
                 {/* Owner 2026-11-24: the one message log */}
-                {tab === 'activity' && open && <MessageLog orgId={orgId} record={r} />}
+                {tab === 'activity' && open && <MessageLog key={`${r.id}:${refreshNonce}`} orgId={orgId} record={r} />}
 
                 {tab === 'positions' && open && <MembershipsList orgId={orgId} record={r} nonce={membershipNonce} />}
                 {/* Owner 2026-11-19: the interviews scheduled, their links and, after the call, the notes */}
                 {tab === 'interviews' && open && <InterviewsList orgId={orgId} record={r} nonce={historyNonce} onRecord={saved => { replace(saved); setHistoryNonce(n => n + 1); setCallsNonce(n => n + 1); }} />}
 
                 {/* Owner 2026-11-24: the assignment (with the AI score, HR only) and the documents after selection */}
-                {tab === 'work' && open && <AssignmentsTab orgId={orgId} record={r} onChanged={() => setHistoryNonce(n => n + 1)} />}
+                {tab === 'work' && open && <AssignmentsTab key={`${r.id}:${refreshNonce}`} orgId={orgId} record={r} onChanged={() => setHistoryNonce(n => n + 1)} />}
 
                 {tab === 'calls' && open && (
-                    <CallsTab orgId={orgId} record={r}
+                    <CallsTab key={`${r.id}:${refreshNonce}`} orgId={orgId} record={r}
                         onLogged={() => { setHistoryNonce(n => n + 1); setCallsNonce(n => n + 1); }}
                         onRecord={saved => replace(saved)} />
                 )}
@@ -472,6 +480,7 @@ export default function CandidateDetails({ record, open, onClose, onEdit, orgId,
 
             {/* The person, on every tab (owner 2026-11-25, the reference layout's right panel). */}
             <aside aria-label={`About ${r.fullName}`} className="min-w-0 divide-y divide-border-subtle rounded-2xl bg-surface px-4 ring-1 ring-inset ring-border @3xl:sticky @3xl:top-0">
+                {open && <CandidateRemarks key={r.id} orgId={orgId} record={r} nonce={historyNonce} onAdd={addRemark} />}
                 <section aria-labelledby="cand-personal-title" className="py-4">
                     <h3 id="cand-personal-title" className="text-sm font-semibold text-text-primary">Personal Information</h3>
                     {r.email || r.phone || r.location ? (
@@ -498,17 +507,6 @@ export default function CandidateDetails({ record, open, onClose, onEdit, orgId,
                         </dl>
                     </section>
                 )}
-                {/* Notes: the record's remark; a new remark is written in Activity, where remarks are kept. */}
-                <section aria-labelledby="cand-notes-title" className="py-4">
-                    <h3 id="cand-notes-title" className="text-sm font-semibold text-text-primary">Notes</h3>
-                    {r.remark && <p className="mt-2 whitespace-pre-wrap break-words rounded-lg bg-surface-elevated px-3 py-2 text-[13px] text-text-primary"><span className="sr-only">Remark on the record: </span>{r.remark}</p>}
-                    <button type="button" onClick={addRemark} aria-label="Write a remark (opens Activity)"
-                        className="mt-2.5 flex h-10 w-full cursor-text items-center gap-x-2 rounded-lg border border-border bg-surface px-3 text-left text-[13px] text-text-tertiary transition-colors hover:border-text-tertiary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50">
-                        <span className="min-w-0 flex-1 truncate">Write note…</span>
-                        <PencilLine className="h-4 w-4 shrink-0" aria-hidden />
-                    </button>
-                    <p className="mt-1.5 text-xs text-text-tertiary">Remarks and interview feedback are kept in Activity.</p>
-                </section>
             </aside>
             </div>
             </div>

@@ -3,7 +3,7 @@
 import { AnimatePresence, motion, useAnimationControls, useReducedMotion } from 'framer-motion';
 import { X } from 'lucide-react';
 import { useParams, usePathname } from 'next/navigation';
-import { useEffect, useState, type CSSProperties } from 'react';
+import { useEffect, useRef, useState, useSyncExternalStore, type CSSProperties, type PointerEvent } from 'react';
 
 import { BOT_NAME, BOT_TITLE, isAllowedBotPath } from '@/backend/lib/hr-assistant/identity';
 import { useAuth } from '@/frontend/context/AuthContext';
@@ -11,6 +11,7 @@ import { isBdSuperAdmin } from '@/frontend/constants/bdSuperAdmins';
 
 import { BotFace, type BotMood } from './BotFace';
 import { claimHrChat, HrAssistantChat, useHrChatPending } from './HrAssistantChat';
+import { ottoDockAt, parseOttoDock, type OttoDock } from './ottoDock';
 
 interface HrAccess {
     canUse: boolean;
@@ -48,6 +49,11 @@ function markGreeted() {
     }
 }
 
+function subscribeToDock(onChange: () => void) {
+    window.addEventListener('storage', onChange);
+    return () => window.removeEventListener('storage', onChange);
+}
+
 function loadAccess(userId: string): Promise<HrAccess> {
     if (accessCache?.userId !== userId) {
         const access = fetch('/api/hr-assistant', { cache: 'no-store' })
@@ -62,7 +68,7 @@ function loadAccess(userId: string): Promise<HrAccess> {
 }
 
 /** Three bouncing dots in a little cloud, floating off the launcher while an answer loads. */
-function ThoughtCloud() {
+function ThoughtCloud({ left, nearTop }: { left: boolean; nearTop: boolean }) {
     const reduceMotion = useReducedMotion();
     return (
         <motion.div
@@ -72,7 +78,7 @@ function ThoughtCloud() {
             exit={{ opacity: 0, scale: 0.6, y: 6 }}
             transition={{ type: 'spring', stiffness: 420, damping: 26 }}
             style={{ transformOrigin: 'bottom right' }}
-            className="pointer-events-none absolute bottom-[calc(100%-22px)] right-[calc(100%-12px)]"
+            className={`pointer-events-none absolute ${nearTop ? 'top-6' : 'bottom-[calc(100%-22px)]'} ${left ? 'left-[calc(100%-12px)]' : 'right-[calc(100%-12px)]'}`}
         >
             <div className="flex items-center gap-1 rounded-full border border-border bg-surface px-3 py-2 shadow-lg">
                 {[0, 1, 2].map(index => (
@@ -134,6 +140,8 @@ function useOtherPopupOpen(): boolean {
 
 export default function HrAssistantBot() {
     const { user, membership } = useAuth();
+    const userId = user?.id;
+    const dockKey = userId ? `hr-assistant-dock:${userId}` : null;
     const params = useParams();
     const pathname = usePathname();
     // /procurement, /property/... and /org/... have no [orgId] segment, so fall back to the
@@ -145,12 +153,20 @@ export default function HrAssistantBot() {
     const [open, setOpenState] = useState(() => wasOpen && openFor === user?.id);
     const [hovered, setHovered] = useState(false);
     const [greeting, setGreeting] = useState(false);
+    const [savedDock, setSavedDock] = useState<{ key: string; position: OttoDock | null } | null>(null);
+    const [dragDock, setDragDock] = useState<OttoDock | null>(null);
+    const drag = useRef<{ pointerId: number; x: number; y: number; offset: number; moved: boolean } | null>(null);
+    const ignoreClick = useRef(false);
     const pending = useHrChatPending();
     const reduceMotion = useReducedMotion();
     const squash = useAnimationControls();
     const otherPopupOpen = useOtherPopupOpen();
     const allowedPath = isAllowedBotPath(pathname);
     const canUse = Boolean(user && access?.canUse && allowedPath);
+
+    const storedDock = useSyncExternalStore(subscribeToDock, () => {
+        try { return dockKey ? window.localStorage.getItem(dockKey) : null; } catch { return null; }
+    }, () => null);
 
     const setOpen = (next: boolean) => {
         wasOpen = next;
@@ -220,12 +236,30 @@ export default function HrAssistantBot() {
 
     // BD Super Admins have the CRM ⇄ FMS pill at bottom-5 right-5; sit just above it.
     const raised = isBdSuperAdmin(user.email, membership?.org_role);
+    const dock = dragDock ?? (savedDock?.key === dockKey ? savedDock?.position : parseOttoDock(storedDock));
+    const left = dock?.side === 'left';
+    const nearTop = (dock?.height ?? 1) < 0.35;
+    const bottom = raised ? '5rem' : '1.25rem';
+    const dockStyle = dock ? { top: `calc(1.25rem + max(0px, (100dvh / var(--app-zoom, 1) - 5.25rem - ${bottom}) * ${dock.height}))` } : undefined;
+
+    const saveDock = (position: OttoDock) => {
+        if (!dockKey) return;
+        setSavedDock({ key: dockKey, position });
+        try { window.localStorage.setItem(dockKey, JSON.stringify(position)); } catch { /* keep it for the current session */ }
+    };
+    const pointerDock = (event: PointerEvent<HTMLButtonElement>, offset: number) => {
+        const root = document.documentElement;
+        const rootStyle = window.getComputedStyle(root);
+        const zoom = Number(rootStyle.getPropertyValue('--app-zoom')) || 1;
+        const rem = parseFloat(rootStyle.fontSize) * zoom;
+        return ottoDockAt(event.clientX, event.clientY - offset, window.innerWidth, window.innerHeight, 1.25 * rem, (raised ? 5 : 1.25) * rem, 4 * rem);
+    };
     const documentsHref = access.isAdmin && orgId ? `/${orgId}/hr-assistant/documents` : null;
     // Sized from the viewport: ~a quarter of the width and ~70% of the height, clamped, and never
     // taller than the space above the launcher (1rem gap at the top), so it always fits on screen.
     const windowBottom = raised ? '10rem' : '6rem';
     const windowSize = {
-        transformOrigin: 'bottom right',
+        transformOrigin: left ? 'bottom left' : 'bottom right',
         '--hr-win-w': 'min(420px, max(320px, 25vw), calc(100vw - 2.5rem))',
         '--hr-win-h': `min(640px, max(380px, 70vh), calc(100dvh - ${windowBottom} - 1rem))`,
     } as CSSProperties;
@@ -246,7 +280,7 @@ export default function HrAssistantBot() {
                         exit={{ opacity: 0, y: 24, scale: 0.95 }}
                         transition={{ type: 'spring', stiffness: 320, damping: 28 }}
                         style={windowSize}
-                        className={`fixed inset-0 z-[65] overflow-hidden bg-surface shadow-2xl sm:inset-auto sm:right-5 sm:h-[var(--hr-win-h)] sm:w-[var(--hr-win-w)] sm:rounded-2xl sm:border sm:border-border ${
+                        className={`fixed inset-0 z-[65] overflow-hidden bg-surface shadow-2xl sm:inset-auto ${left ? 'sm:left-5' : 'sm:right-5'} sm:h-[var(--hr-win-h)] sm:w-[var(--hr-win-w)] sm:rounded-2xl sm:border sm:border-border ${
                             raised ? 'sm:bottom-40' : 'sm:bottom-24'
                         }`}
                     >
@@ -256,7 +290,8 @@ export default function HrAssistantBot() {
             </AnimatePresence>
 
             <div
-                className={`fixed right-5 z-[65] flex items-end gap-3 ${raised ? 'bottom-20' : 'bottom-5'} ${
+                style={dockStyle}
+                className={`fixed z-[65] size-16 ${left ? 'left-5' : 'right-5'} ${dock ? '' : raised ? 'bottom-20' : 'bottom-5'} ${
                     open || otherPopupOpen ? 'max-sm:hidden' : ''
                 }`}
             >
@@ -269,12 +304,11 @@ export default function HrAssistantBot() {
                             animate={{ opacity: 1, scale: 1, x: 0 }}
                             exit={{ opacity: 0, scale: 0.9, x: 8 }}
                             transition={{ type: 'spring', stiffness: 380, damping: 26 }}
-                            style={{ transformOrigin: 'bottom right' }}
-                            className="relative mb-3 w-60 max-w-[calc(100vw-7rem)] rounded-2xl rounded-br-sm border border-border bg-surface p-3.5 pr-8 shadow-xl"
+                            className={`absolute w-60 max-w-[calc(100vw-7rem)] rounded-2xl border border-border bg-surface p-3.5 pr-8 shadow-xl ${nearTop ? 'top-0' : 'bottom-0'} ${left ? 'left-[calc(100%+12px)]' : 'right-[calc(100%+12px)]'}`}
                         >
                             <span
                                 aria-hidden="true"
-                                className="absolute -right-[7px] bottom-3 size-3 rotate-45 border-r border-t border-border bg-surface"
+                                className={`absolute size-3 rotate-45 border-border bg-surface ${nearTop ? 'top-3' : 'bottom-3'} ${left ? '-left-[7px] border-b border-l' : '-right-[7px] border-r border-t'}`}
                             />
                             <button
                                 type="button"
@@ -303,7 +337,7 @@ export default function HrAssistantBot() {
                             initial={{ opacity: 0, x: 8 }}
                             animate={{ opacity: 1, x: 0 }}
                             exit={{ opacity: 0, x: 8 }}
-                            className="mb-4 hidden whitespace-nowrap rounded-2xl rounded-br-sm border border-border bg-surface px-3 py-2 text-xs font-semibold text-text-primary shadow-lg sm:block"
+                            className={`absolute bottom-4 hidden whitespace-nowrap rounded-2xl border border-border bg-surface px-3 py-2 text-xs font-semibold text-text-primary shadow-lg sm:block ${left ? 'left-[calc(100%+12px)]' : 'right-[calc(100%+12px)]'}`}
                         >
                             Hi, I&apos;m {BOT_NAME}! Ask me about HR policy
                         </motion.span>
@@ -311,7 +345,7 @@ export default function HrAssistantBot() {
                 </AnimatePresence>
 
                 <div className="relative">
-                    <AnimatePresence>{pending && <ThoughtCloud key="thinking" />}</AnimatePresence>
+                    <AnimatePresence>{pending && <ThoughtCloud key="thinking" left={left} nearTop={nearTop} />}</AnimatePresence>
                     {/* soft pulsing halo behind the bot */}
                     <motion.span
                         aria-hidden="true"
@@ -321,7 +355,43 @@ export default function HrAssistantBot() {
                     />
                     <motion.button
                         type="button"
-                        onClick={() => void toggle()}
+                        onClick={() => { if (!ignoreClick.current) void toggle(); ignoreClick.current = false; }}
+                        onPointerDown={event => {
+                            if (event.button !== 0 || !event.isPrimary) return;
+                            ignoreClick.current = false;
+                            drag.current = { pointerId: event.pointerId, x: event.clientX, y: event.clientY, offset: event.clientY - event.currentTarget.getBoundingClientRect().top, moved: false };
+                            event.currentTarget.setPointerCapture(event.pointerId);
+                        }}
+                        onPointerMove={event => {
+                            const current = drag.current;
+                            if (!current || current.pointerId !== event.pointerId) return;
+                            if (!current.moved && Math.hypot(event.clientX - current.x, event.clientY - current.y) < 6) return;
+                            current.moved = true;
+                            setDragDock(pointerDock(event, current.offset));
+                            setGreeting(false);
+                            setHovered(false);
+                        }}
+                        onPointerUp={event => {
+                            const current = drag.current;
+                            if (!current || current.pointerId !== event.pointerId) return;
+                            if (current.moved) {
+                                ignoreClick.current = true;
+                                saveDock(pointerDock(event, current.offset));
+                            }
+                            drag.current = null;
+                            setDragDock(null);
+                        }}
+                        onLostPointerCapture={() => { drag.current = null; setDragDock(null); }}
+                        onKeyDown={event => {
+                            const current = dock ?? { side: 'right', height: 1 };
+                            if (event.key === 'ArrowLeft' || event.key === 'ArrowRight') {
+                                event.preventDefault();
+                                saveDock({ ...current, side: event.key === 'ArrowLeft' ? 'left' : 'right' });
+                            } else if (event.key === 'ArrowUp' || event.key === 'ArrowDown') {
+                                event.preventDefault();
+                                saveDock({ ...current, height: Math.max(0, Math.min(1, current.height + (event.key === 'ArrowUp' ? -0.1 : 0.1))) });
+                            }
+                        }}
                         onMouseEnter={() => setHovered(true)}
                         onMouseLeave={() => setHovered(false)}
                         onFocus={() => setHovered(true)}
@@ -329,11 +399,12 @@ export default function HrAssistantBot() {
                         aria-label={open ? `Close ${BOT_NAME}, the HR assistant` : `Open ${BOT_NAME}, the HR assistant`}
                         aria-expanded={open}
                         aria-controls="hr-assistant-window"
+                        title="Open Otto. Drag or use the arrow keys to move along a screen edge."
                         initial={{ y: 0 }}
                         animate={reduceMotion ? undefined : { y: [0, -10, 0, -4, 0] }}
                         transition={{ duration: 0.9, delay: 0.6, ease: 'easeOut' }}
                         whileHover={{ scale: 1.08, rotate: -6 }}
-                        className="relative flex size-16 items-center justify-center rounded-full focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-primary/60"
+                        className="relative flex size-16 touch-none select-none items-center justify-center rounded-full active:cursor-grabbing focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-primary/60"
                     >
                         <motion.span animate={squash} className="flex" style={{ transformOrigin: '50% 90%' }}>
                             <BotFace className="size-14" interactive mood={mood} />

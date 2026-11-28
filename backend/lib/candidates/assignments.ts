@@ -13,7 +13,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 
 import { recordAction, type Actor } from "./actions";
-import { istDue, kindLink } from "./applications";
+import { currentDocumentRows, documentsLink, istDue, kindLink } from "./applications";
 import { logMessage } from "./audit";
 import { RESUME_BUCKET } from "./config";
 import { parsePhone } from "./normalize";
@@ -200,11 +200,10 @@ export async function requestDocuments(client: SupabaseClient, orgId: string, by
   if (p.blocked) throw new CandidateActionError(409, "This person is blacklisted or their data was removed. Nothing goes to them.");
   const settings = (await loadRecruitmentConfig(client, orgId)).outreach;
   if (!settings.documents.items.length) throw new CandidateActionError(400, "List the documents to ask for first (Recruitment → Outreach → Documents).");
-  // An earlier documents link for this person is switched off, so only the newest one works.
-  await client.from("recruitment_application_links").update({ disabled_at: new Date().toISOString() }).eq("organization_id", orgId).eq("candidate_id", a.candidateId).eq("kind", "documents").is("disabled_at", null);
   let link;
   try {
-    link = await kindLink(client, orgId, "documents", { candidateId: a.candidateId, applicationId: a.applicationId, positionId: a.positionId, createdBy: by.id ?? null });
+    link = await documentsLink(client, orgId, a.candidateId, a.positionId)
+      ?? await kindLink(client, orgId, "documents", { candidateId: a.candidateId, applicationId: a.applicationId, positionId: a.positionId, createdBy: by.id ?? null });
   } catch (e) {
     if (e instanceof CandidateActionError && e.status === 503) throw new CandidateActionError(503, ASSIGNMENT_MIGRATION_MESSAGE);
     throw e;
@@ -220,22 +219,27 @@ export async function requestDocuments(client: SupabaseClient, orgId: string, by
 
 export async function listDocuments(client: SupabaseClient, orgId: string, candidateId: string): Promise<DocumentView[]> {
   if (!UUID.test(candidateId)) return [];
-  const { data, error } = await client.from(DOCUMENTS).select("id, item, file_name, status, review_note, reviewed_by_name, uploaded_at, file_path").eq("organization_id", orgId).eq("candidate_id", candidateId).order("uploaded_at", { ascending: false }).limit(100);
-  if (error) { if (missing(error)) return []; throw new CandidateActionError(500, "Couldn't load the documents."); }
-  return ((data ?? []) as { id: string; item: string; file_name: string | null; status: DocumentView["status"]; review_note: string | null; reviewed_by_name: string | null; uploaded_at: string; file_path: string }[])
-    .filter((d) => d.file_path !== "pending")
-    .map((d) => ({ id: d.id, item: d.item, fileName: d.file_name, status: d.status, reviewNote: d.review_note, reviewedBy: d.reviewed_by_name, uploadedAt: d.uploaded_at }));
+  const documents = await currentDocumentRows(client, orgId, candidateId);
+  return documents.map(d => ({ id: d.id, item: d.item, fileName: d.file_name, status: d.status, reviewNote: d.review_note,
+    reviewedBy: d.reviewed_by_name, uploadedAt: new Date(d.uploaded_at).toISOString() }));
 }
 
-export async function reviewDocument(client: SupabaseClient, orgId: string, by: Actor, id: string, status: unknown, note: unknown): Promise<void> {
+export async function reviewDocument(client: SupabaseClient, orgId: string, by: Actor, id: string, status: unknown, note: unknown, expectedUpload?: unknown): Promise<{ candidateId: string; positionId: string | null }> {
   if (status !== "verified" && status !== "rejected") throw new CandidateActionError(400, "Mark it verified or rejected.");
   const reviewNote = text(note, 500);
   if (status === "rejected" && !reviewNote) throw new CandidateActionError(400, "Say why it is rejected, so the candidate can fix it.");
-  const { data, error } = await client.from(DOCUMENTS).update({ status, review_note: reviewNote || null, reviewed_by_name: by.name, reviewed_at: new Date().toISOString() }).eq("organization_id", orgId).eq("id", id).select("id, candidate_id, position_id, item");
+  let update = client.from(DOCUMENTS).update({ status, review_note: reviewNote || null, reviewed_by_name: by.name, reviewed_at: new Date().toISOString() })
+    .eq("organization_id", orgId).eq("id", id).neq("file_path", "pending");
+  if (expectedUpload !== undefined) {
+    if (typeof expectedUpload !== "string" || !Number.isFinite(Date.parse(expectedUpload))) throw new CandidateActionError(400, "Reload the document before reviewing.");
+    update = update.eq("uploaded_at", expectedUpload);
+  }
+  const { data, error } = await update.select("id, candidate_id, position_id, item");
   if (error) throw new CandidateActionError(500, "The document could not be updated.");
   const row = ((data ?? []) as { id: string; candidate_id: string; position_id: string | null; item: string }[])[0];
-  if (!row) throw new CandidateActionError(404, "Document not found.");
-  await recordAction(client, orgId, by, { candidateId: row.candidate_id, applicationId: null, positionId: row.position_id, action: "remark", toValue: `${status === "verified" ? "Verified" : "Rejected"} "${row.item}"${reviewNote ? `: ${reviewNote}` : ""}`, meta: { kind: "document_reviewed", documentId: row.id } });
+  if (!row) throw new CandidateActionError(expectedUpload ? 409 : 404, expectedUpload ? "This file changed. Refresh the profile and open the latest upload." : "Document not found.");
+  await recordAction(client, orgId, by, { candidateId: row.candidate_id, applicationId: null, positionId: row.position_id, action: "remark", toValue: `${status === "verified" ? "Verified" : "Requested changes to"} "${row.item}"${reviewNote ? `: ${reviewNote}` : ""}`, meta: { kind: "document_reviewed", documentId: row.id } });
+  return { candidateId: row.candidate_id, positionId: row.position_id };
 }
 
 export async function documentFileUrl(client: SupabaseClient, orgId: string, id: string): Promise<string> {

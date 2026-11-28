@@ -19,6 +19,7 @@ export async function GET(request: Request) {
       applicationId: params.get("applicationId"),
       positionId: params.get("positionId") || null,
       kind: params.get("kind"),
+      expectedStage: params.get("expectedStage"),
     });
     void _phone; void _fullName; void _text;
     return NextResponse.json({ preview });

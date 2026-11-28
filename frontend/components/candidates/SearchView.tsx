@@ -1,29 +1,28 @@
 'use client';
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { CircleAlert, Download, ListFilter, Send, Sparkles, X } from 'lucide-react';
+import { CircleAlert, ListFilter, Send, Sparkles, X } from 'lucide-react';
 import {
     allKeywordTerms, blankFields, EMPTY_FILTERS, filterChips, hasActiveFilter, SORT_LABELS, SORTS,
     type ConflictChoice, type FieldAvailability, type FilterResponse, type FilterSort, type PreferredItem, type SearchFilters, type UnderstandResponse,
 } from '@/backend/lib/candidates/filters';
 import type { Preferences } from '@/backend/lib/candidates/query-spec';
-import { RECORD_STATUSES, STATUS_LABELS, type CandidateRecord, type Position, type RecordStatus, type SearchResponse, type SearchResult } from '@/backend/lib/candidates/types';
+import { type CandidateRecord, type Position, type RecordStatus, type SearchResponse, type SearchResult } from '@/backend/lib/candidates/types';
 import Skeleton from '@/frontend/components/ui/Skeleton';
 import { SavedSearches } from './PrivacyControls';
 import { api, type ApiResult } from './api';
 import BulkOutreachDialog from './BulkOutreachDialog';
 import CandidateDetails from './CandidateDetails';
-import { downloadCsv, recordsToCsv } from './export-csv';
 import type { PanelToggleVariant } from '@/frontend/components/ui/PanelToggle';
 import FilterRail, { FilterStrip } from './FilterRail';
 import { formatCount } from './format';
 import KeywordBar from './KeywordBar';
 import JdStrip from './JdStrip';
-import { AddToPositionSelect, PositionDialog } from './PipelineView';
+import { PositionDialog } from './PipelineView';
 import { preferLabels } from './PositionsView';
 import SearchFor from './SearchFor';
 import QuickView from './QuickView';
-import { RemarkDialog, statusNeedsRemark, useStatusRemark } from './Remarks';
+import { useStatusRemark } from './Remarks';
 import RecordForm from './RecordForm';
 import ResultCard from './ResultCard';
 import UnderstoodCard from './UnderstoodCard';
@@ -64,7 +63,6 @@ const RAIL_STORE = 'candidate-search-filters';
 const QUICK_WIDTH = 380;
 const QUICK_FROM = 1160;
 /** Status changes sent at the same time by "Set status" on the ticked candidates. */
-const BULK_PARALLEL = 4;
 
 type SortValue = FilterSort | 'match';
 
@@ -123,7 +121,6 @@ export default function SearchView({ orgId, dataVersion, onDataChanged, collapse
     const [availability, setAvailability] = useState<FieldAvailability | null>(null);
     // Ticked candidates belong to one set of filters; another search starts with nothing ticked.
     const [pickedState, setPickedState] = useState<{ key: string; ids: string[] }>({ key: '', ids: [] });
-    const [bulkBusy, setBulkBusy] = useState(false);
     /** The candidate shown in the quick view. Owner 2026-11-11: it is closed until a card is clicked. */
     const [focusId, setFocusId] = useState<string | null>(null);
 
@@ -381,36 +378,7 @@ export default function SearchView({ orgId, dataVersion, onDataChanged, collapse
     const allPicked = results.length > 0 && results.every(x => picked.includes(x.record.id));
     const pick = (record: CandidateRecord, on: boolean) => setPickedState({ key: filterKey, ids: on ? [...picked.filter(id => id !== record.id), record.id] : picked.filter(id => id !== record.id) });
     const pickAll = (on: boolean) => setPickedState({ key: filterKey, ids: on ? results.map(x => x.record.id) : [] });
-    const exportPicked = () => {
-        if (!pickedRecords.length) return;
-        downloadCsv(`candidates-${new Date().toISOString().slice(0, 10)}.csv`, recordsToCsv(pickedRecords));
-        notify(`${formatCount(pickedRecords.length)} ${pickedRecords.length === 1 ? 'candidate' : 'candidates'} exported`, 'success');
-    };
     const [bulkSend, setBulkSend] = useState(false);
-    // Owner 2026-11-15: "Others" needs a remark; one remark covers every ticked record.
-    const [bulkRemark, setBulkRemark] = useState<RecordStatus | null>(null);
-    const bulkStatus = async (status: RecordStatus, remark: string | null = null) => {
-        const targets = pickedRecords.filter(r => r.status !== status);
-        if (!targets.length || bulkBusy) return;
-        if (statusNeedsRemark(status) && !remark) { setBulkRemark(status); return; }
-        setBulkRemark(null);
-        setBulkBusy(true);
-        let done = 0;
-        let failed = 0;
-        let next = 0;
-        const lane = async () => {
-            while (next < targets.length) {
-                const record = targets[next];
-                next += 1;
-                const res = await api<{ record: CandidateRecord }>(`/api/candidates/${encodeURIComponent(record.id)}`, { method: 'PATCH', json: { orgId, status, ...(remark ? { actionRemark: remark } : {}) } });
-                if (res.ok) { replaceRecord(res.data.record); done += 1; } else { failed += 1; if (res.noAccess) reportError(res); }
-            }
-        };
-        await Promise.all(Array.from({ length: Math.min(BULK_PARALLEL, targets.length) }, lane));
-        setBulkBusy(false);
-        if (done) { notify(`${formatCount(done)} ${done === 1 ? 'candidate' : 'candidates'} set to ${STATUS_LABELS[status]}${failed ? `; ${formatCount(failed)} could not be changed` : ''}`, failed ? 'info' : 'success'); onDataChanged(); }
-        else if (failed) notify('The status could not be changed. Please try again.', 'error');
-    };
 
     // Open only for a card that was clicked and is still in the list; a new search that drops it closes the view.
     const focused = canQuick && focusId ? results.find(x => x.record.id === focusId) ?? null : null;
@@ -419,13 +387,6 @@ export default function SearchView({ orgId, dataVersion, onDataChanged, collapse
         <div className="space-y-4">
             {statusRemarkDialog}
             <BulkOutreachDialog orgId={orgId} applicationIds={pickedRecords.map(r => r.id)} open={bulkSend} onClose={() => setBulkSend(false)} />
-            <RemarkDialog
-                open={bulkRemark !== null} required busy={bulkBusy}
-                title={bulkRemark ? `${formatCount(pickedRecords.length)} ${pickedRecords.length === 1 ? 'candidate' : 'candidates'}: ${STATUS_LABELS[bulkRemark]}` : ''}
-                description={bulkRemark ? `"${STATUS_LABELS[bulkRemark]}" needs a remark; this one is kept on each of them.` : undefined}
-                onClose={() => setBulkRemark(null)}
-                onSubmit={remark => { if (bulkRemark) void bulkStatus(bulkRemark, remark); }}
-            />
             <PositionDialog
                 open={positionOpen} orgId={orgId}
                 seed={{ title: jobFileName ? jobFileName.replace(/\.[^.]+$/, '').replace(/[_-]+/g, ' ') : '', jdText: jobText, jdFileName: jobFileName || undefined, filters, prefer }}
@@ -616,21 +577,7 @@ export default function SearchView({ orgId, dataVersion, onDataChanged, collapse
                             {/* Workspace skin (owner 2026-11-25): the bar takes a light teal tint while something is ticked. */}
                             {pickedRecords.length > 0 && (
                                 <>
-                                    {bulkBusy && <Spinner className="h-3.5 w-3.5 text-text-tertiary" />}
-                                    <AddToPositionSelect orgId={orgId} applicationIds={pickedRecords.map(r => r.id)} disabled={bulkBusy} onAdded={onDataChanged} />
-                                    {/* Owner 2026-11-24: bulk WhatsApp / email with the application form link */}
-                                    <button type="button" onClick={() => setBulkSend(true)} disabled={bulkBusy} className={BTN_BAR}><Send className="h-4 w-4" aria-hidden />Send message</button>
-                                    <select
-                                        aria-label="Set the status of the selected candidates"
-                                        value=""
-                                        disabled={bulkBusy}
-                                        onChange={e => { if (e.target.value) void bulkStatus(e.target.value as RecordStatus); }}
-                                        className={`h-8 cursor-pointer rounded-lg border border-border bg-surface px-2 text-sm font-semibold text-text-primary disabled:opacity-60 ${FOCUS}`}
-                                    >
-                                        <option value="">Change status</option>
-                                        {RECORD_STATUSES.map(st => <option key={st} value={st}>{STATUS_LABELS[st]}</option>)}
-                                    </select>
-                                    <button type="button" onClick={exportPicked} className={BTN_BAR}><Download className="h-4 w-4" aria-hidden />Export (logged)</button>
+                                    <button type="button" onClick={() => setBulkSend(true)} className={BTN_BAR}><Send className="h-4 w-4" aria-hidden />Send message</button>
                                     <button type="button" onClick={() => pickAll(false)} className={`ml-auto inline-flex h-8 items-center gap-x-1 rounded-lg px-2 text-sm font-semibold text-text-secondary hover:bg-muted hover:text-text-primary ${FOCUS}`}><X className="h-3.5 w-3.5" aria-hidden />Clear</button>
                                 </>
                             )}

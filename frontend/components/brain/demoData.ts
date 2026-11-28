@@ -21,6 +21,7 @@ import type {
 import type { AiInventoryItem, AiJobRow, AiKeyRow, AiModelRow, AiModelsData, AiTestResult, BrainApi, Days, Plain, Result } from './api';
 import type { TicketReviewView } from '@/backend/lib/ticketing/sortReview';
 import type { CategoriesView } from '@/backend/lib/ticketing/categoryConfig';
+import { isHrModelGroup } from '@/task-manager/ai/aiCatalog';
 import { describeChanges, skillModeOf } from './settingsDiff';
 
 const TODAY = '2026-11-14';
@@ -311,7 +312,7 @@ const AI_JOBS_DEMO: DemoJob[] = [
     J('import_text', 'Reading text and Excel', 'Turns a pasted list or a sheet into tasks', 'Task import', 'chat', ['anthropic', 'engy'], ['anthropic:claude-sonnet-5-5', 'qwen3.8-27b']),
     J('learning_loop', 'Learning loop', 'Review summaries and nightly draft instructions (admin only)', 'Task import', 'chat', CHAT, ['anthropic:claude-sonnet-5-5', 'glm-5.3-flash'], ['kimi-k3', 'gemini-3.8-flash']),
     J('brain_turn', 'The brain turn', 'Reads the message, looks things up with its skills, and answers or proposes an action. The first model that answers is used; the rest are backups', 'Unified brain', 'chat', ['anthropic', 'engy', 'groq'], ['anthropic:claude-opus-5-5', 'anthropic:claude-sonnet-5-5', 'anthropic:claude-haiku-5-5', 'glm-5.3-flash']),
-    J('candidate_parse', 'Reading the search', 'Turns an HR request or job description into filters (experience, notice, salary, location)', 'Candidate Search', 'chat', CHAT, ['anthropic:claude-opus-5-5']),
+    J('candidate_parse', 'Reading searches, JDs and remarks', 'Extracts search filters and position details from job descriptions, reads scanned JDs with a PDF-capable model, and formats candidate remarks', 'Candidate Search', 'chat', CHAT, ['anthropic:claude-opus-5-5']),
     J('candidate_rank', 'Ranking candidates', 'Scores the shortlisted records against the request and explains each pick', 'Candidate Search', 'chat', CHAT, ['anthropic:claude-opus-5-5']),
     J('candidate_extract', 'Reading resumes', 'Reads education, skills and employers out of each uploaded resume into the empty fields', 'Candidate Search', 'chat', CHAT, ['anthropic:claude-haiku-5-5', 'anthropic:claude-sonnet-5-5']),
     J('hr_answer', 'HR assistant: answering', 'Answers HR policy questions from the policy documents', 'HR', 'chat', CHAT, ['groq:openai/gpt-oss-120b', 'qwen3.8-27b']),
@@ -510,9 +511,9 @@ export function createDemoApi(): BrainApi {
         leftToday: suggestMode === 'used' ? 0 : 3, perDay: 3,
     };
     let others: OtherBotItem[] = empty ? [] : structuredClone(OTHERS);
-    let aiJobs: DemoJob[] = structuredClone(AI_JOBS_DEMO);
+    let aiJobs: DemoJob[] = structuredClone(AI_JOBS_DEMO.filter(job => !isHrModelGroup(job.group)));
     const aiData = (): AiModelsData => ({
-        tableMissing: variant === 'nomodels', keys: AI_KEYS_DEMO, maxChain: AI_MAX_CHAIN, inventory: AI_INVENTORY_DEMO,
+        tableMissing: variant === 'nomodels', keys: AI_KEYS_DEMO, maxChain: AI_MAX_CHAIN, inventory: AI_INVENTORY_DEMO.filter(item => item.area !== 'HR'),
         jobs: aiJobs.map(({ providers: _p, ...j }) => {
             void _p;
             const model = (id: string) => AI_MODELS_DEMO.find(m => m.id === id);

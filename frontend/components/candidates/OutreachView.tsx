@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useEffect, useMemo, useState } from 'react';
-import { ArrowDown, ArrowUp, Copy, ExternalLink, FileText, Inbox, Link2, Plus, RotateCcw, Send, Trash2 } from 'lucide-react';
+import { ArrowDown, ArrowUp, Copy, ExternalLink, FileText, Inbox, Link2, PanelRightOpen, Plus, RotateCcw, Send, Trash2 } from 'lucide-react';
 import type { ApplicationEntry } from '@/backend/lib/candidates/applications';
 import type { CampaignSendEntry, CampaignSummary } from '@/backend/lib/candidates/outreach-campaigns';
 import {
@@ -12,7 +12,8 @@ import type { Position } from '@/backend/lib/candidates/types';
 import { BriefAttachmentField, uploadBrief } from './BriefAttachmentField';
 import { api, qs } from './api';
 import { formatDate } from './format';
-import { Drawer, Spinner, useUi } from './ui';
+import { CopyButton, Drawer, Spinner, useUi } from './ui';
+import { useCandidateProfile } from './useCandidateProfile';
 import {
     EmptyBlock, K_AREA, K_BTN, K_BTN_GHOST, K_BTN_GHOST_DANGER, K_BTN_PRIMARY, K_CARD, K_FIELD, K_ICON_BTN, K_ICON_BTN_DANGER, K_LABEL, K_WELL,
     Loading, PageHeader, type PillTone, Segmented, SelectPill, StatusPill,
@@ -163,6 +164,8 @@ function CampaignDrawer({ orgId, id, onClose, onChanged }: { orgId: string; id: 
 
 function ApplicationsPanel({ orgId }: { orgId: string }) {
     const { notify } = useUi();
+    const profile = useCandidateProfile(orgId);
+    const [openingProfile, setOpeningProfile] = useState(false);
     const [data, setData] = useState<{ applications: ApplicationEntry[]; total: number; form: OutreachSettings['applicationForm'] } | null>(null);
     const [positions, setPositions] = useState<Position[]>([]);
     const [positionId, setPositionId] = useState('');
@@ -197,6 +200,15 @@ function ApplicationsPanel({ orgId }: { orgId: string }) {
         if (tab) tab.location.href = res.data.url;
     };
     const current = data?.applications.find(a => a.id === openId) ?? null;
+    const openProfile = async (entry: ApplicationEntry) => {
+        const id = entry.applicationId ?? entry.candidateId;
+        if (!id) return;
+        setOpeningProfile(true);
+        let opened = await profile.show(id, !entry.applicationId, entry.positionId, !!entry.applicationId && !!entry.candidateId);
+        if (!opened && entry.applicationId && entry.candidateId) opened = await profile.show(entry.candidateId, true, entry.positionId);
+        setOpeningProfile(false);
+        if (opened) setOpenId(null);
+    };
     return (
         <div className="space-y-4">
             <section className={`${K_CARD} px-4 py-4 sm:px-5`} aria-label="Link for job postings">
@@ -247,16 +259,29 @@ function ApplicationsPanel({ orgId }: { orgId: string }) {
                     </div>
                 )}
             </section>
-            <Drawer open={!!current} onClose={() => setOpenId(null)} labelId="application-title" title={current?.name ?? 'Application'} subtitle={current ? `${current.positionTitle ?? 'General'} · ${formatDate(current.createdAt)}` : undefined}
-                footer={current?.hasResume ? <button type="button" onClick={() => void openResume(current.id)} className={K_BTN_PRIMARY}><FileText className="h-4 w-4" />Open the resume</button> : undefined}>
+            <Drawer open={!!current} onClose={() => { if (!openingProfile) setOpenId(null); }} labelId="application-title" title={current?.name ?? 'Application'} subtitle={current ? `${current.positionTitle ?? 'General'} · ${formatDate(current.createdAt)}` : undefined}
+                footer={current && <div className="flex flex-wrap justify-end gap-2">
+                    {current.hasResume && <button type="button" onClick={() => void openResume(current.id)} className={K_BTN}><FileText className="h-4 w-4" />Open the resume</button>}
+                    {(current.applicationId || current.candidateId) && <button type="button" onClick={() => void openProfile(current)} disabled={openingProfile} className={K_BTN_PRIMARY}>
+                        {openingProfile ? <Spinner /> : <PanelRightOpen className="h-4 w-4" />}Open candidate profile
+                    </button>}
+                </div>}>
                 {current && data && (
                     <dl className="space-y-3 text-sm">
                         {data.form.fields.filter(f => f.type !== 'file').map(f => (
-                            <div key={f.id}><dt className={K_LABEL}>{f.label}</dt><dd className="mt-0.5 whitespace-pre-wrap break-words text-text-primary">{current.answers[f.id] === null || current.answers[f.id] === undefined || current.answers[f.id] === '' ? <span className="text-text-tertiary">—</span> : String(current.answers[f.id])}</dd></div>
+                            <div key={f.id}>
+                                <dt className={K_LABEL}>{f.label}</dt>
+                                <dd className="mt-0.5 break-words text-text-primary">
+                                    <span className="whitespace-pre-wrap">{current.answers[f.id] === null || current.answers[f.id] === undefined || current.answers[f.id] === '' ? '—' : String(current.answers[f.id])}</span>
+                                    {f.target === 'email' && current.email && <CopyButton value={current.email} label="email address" />}
+                                    {f.target === 'phone' && current.phone && <CopyButton value={current.phone} label="phone number" />}
+                                </dd>
+                            </div>
                         ))}
                     </dl>
                 )}
             </Drawer>
+            {profile.drawer}
         </div>
     );
 }

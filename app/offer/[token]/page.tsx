@@ -86,7 +86,7 @@ export default function OfferPage({ params }: { params: Promise<{ token: string 
                                     {page.joiningDate && <div><dt>Joining date</dt><dd>{page.joiningDate}</dd></div>}
                                 </dl>
                             </header>
-                            <section className="rf-card"><h2>Your letter</h2><div className="rf-document">{page.letter.split(/\r?\n\s*\r?\n/).map((p, i) => <p className="whitespace-pre-wrap" key={i}>{p}</p>)}</div></section>
+                            <section className="rf-card"><h2>Your letter</h2>{page.letterFileName && <a href={`/api/public/offer/${encodeURIComponent(token)}?download=letter`} className="rf-secondary my-3 max-w-full break-all">Download offer letter PDF · {page.letterFileName}</a>}<div className="rf-document">{page.letter.split(/\r?\n\s*\r?\n/).map((p, i) => <p className="whitespace-pre-wrap" key={i}>{p}</p>)}</div></section>
                             {(page.breakup.earnings.length > 0 || page.breakup.deductions.length > 0 || page.breakup.benefits.length > 0 || page.breakup.other.length > 0) && (
                                 <section className="rf-card">
                                     <h2 className="text-base font-bold">Salary breakup</h2>

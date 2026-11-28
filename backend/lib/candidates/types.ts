@@ -160,6 +160,8 @@ export interface PositionReadResponse {
   notices: string[];
 }
 
+export type StageNotification = { whatsapp: boolean; emailTemplateId: string | null };
+
 export interface PositionMember {
   id: string;
   positionId: string;
@@ -1101,6 +1103,12 @@ export interface InterviewSend {
 
 export const REQUISITION_STATUSES = ["draft", "submitted", "on_hold", "sent_back", "approved", "rejected", "withdrawn"] as const;
 export type RequisitionStatus = (typeof REQUISITION_STATUSES)[number];
+
+export function experienceText(min?: number | null, max?: number | null): string {
+  if (min != null && max != null) return `${min}–${max} years`;
+  if (min != null) return `${min}+ years`;
+  return max != null ? `Up to ${max} years` : "";
+}
 export const REQUISITION_STATUS_LABELS: Record<RequisitionStatus, string> = {
   draft: "Draft",
   submitted: "Awaiting approval",
@@ -1187,6 +1195,9 @@ export interface Requisition {
   budgetMaxCtc: number | null;
   requiredSkills: string[];
   minExperienceYears: number | null;
+  maxExperienceYears?: number | null;
+  jdFileName?: string | null;
+  requestedInPlan?: boolean | null;
   qualification: string | null;
   targetJoiningDate: string | null;
   justification: string | null;
@@ -1257,6 +1268,7 @@ export interface RequisitionListResponse {
   departments?: string[];
   /** Owner 2026-11-24: the form's department and role dropdowns. */
   hierarchy?: RequisitionHierarchy;
+  requesterDepartment?: string | null;
 }
 export interface RequisitionResponse {
   requisition: Requisition;
@@ -1436,6 +1448,7 @@ export interface Offer {
   currentApproverName: string | null;
   needsDirector: boolean;
   letter: string | null;
+  letterFileName?: string | null;
   /** Blanks still in the letter ("{{joining_date}}"): release is blocked until there are none. */
   letterGaps: string[];
   releasedAt: string | null;

@@ -20,7 +20,7 @@
  */
 import type { SupabaseClient } from "@supabase/supabase-js";
 
-import { APPROVAL_LEVEL_LABELS, HOD_DECISION_HOURS, REQUISITION_STATUS_LABELS, type Requisition, type RequisitionLevel } from "./types";
+import { APPROVAL_LEVEL_LABELS, HOD_DECISION_HOURS, REQUISITION_STATUS_LABELS, experienceText, type Requisition, type RequisitionLevel } from "./types";
 import { activeRoles, headOfDepartment, heldRequisitions, HR_ROLES, loadRecruitmentConfig, passFromDepartmentHead, unassignedRoles, waitingRequisitions, type RequisitionEvent } from "./requisitions";
 
 const NOTICES = "recruitment_requisition_notices";
@@ -85,12 +85,14 @@ export interface LinkSummary {
   raisedByName: string | null;
   /** Owner 2026-11-24 (absent on links issued before). */
   structureNote?: string | null; internalMobility?: boolean | null; roleIsNew?: boolean;
+  maxExperienceYears?: number | null; requestedInPlan?: boolean | null; jdFileName?: string | null;
 }
 export const linkSummary = (r: Requisition): LinkSummary => ({
   requisitionNo: r.requisitionNo, roleTitle: r.roleTitle, department: r.department, location: r.location, positions: r.positions, requestType: r.requestType, replacingName: r.replacingName,
   budgetMinCtc: r.budgetMinCtc, budgetMaxCtc: r.budgetMaxCtc, minExperienceYears: r.minExperienceYears, qualification: r.qualification, targetJoiningDate: r.targetJoiningDate,
   justification: r.justification ? r.justification.slice(0, 1500) : null, raisedByName: r.raisedByName,
   structureNote: r.structureNote ? r.structureNote.slice(0, 1000) : null, internalMobility: r.internalMobility, roleIsNew: r.roleIsNew,
+  maxExperienceYears: r.maxExperienceYears, requestedInPlan: r.requestedInPlan, jdFileName: r.jdFileName,
 });
 /** "Yes", "No" or "—" for the internal mobility answer. */
 export const mobilityText = (v: boolean | null | undefined) => (v === true ? "Yes: someone in the company may fill it" : v === false ? "No" : "—");
@@ -185,12 +187,14 @@ function summaryHtml(r: Requisition): string {
     ["Role", `${r.roleTitle}${r.department ? ` · ${r.department}` : ""}${r.location ? ` · ${r.location}` : ""}`],
     ["Positions", `${r.positions} · ${r.requestType === "replacement" ? `replacement for ${r.replacingName ?? "—"}` : "new"}`],
     ["Budget band (CTC)", `${lpa(r.budgetMinCtc)} to ${lpa(r.budgetMaxCtc)}`],
-    ["Experience", r.minExperienceYears !== null ? `${r.minExperienceYears}+ years` : "—"],
+    ["Experience", experienceText(r.minExperienceYears, r.maxExperienceYears) || "—"],
+    ...(r.requestedInPlan == null ? [] : [["Requester’s plan status", r.requestedInPlan ? "In plan" : "Out of plan"] as [string, string]]),
+    ...(r.jdFileName ? [["Job description PDF", `${r.jdFileName} (in Hiring requests)`] as [string, string]] : []),
     ["Qualification", r.qualification ?? "—"],
     ["Target joining", r.targetJoiningDate ?? "—"],
     ["Raised by", r.raisedByName ?? "—"],
     ["Justification", r.justification ?? "—"],
-    ["Place in the structure", r.structureNote ?? "—"],
+    ...(r.structureNote ? [["Place in the structure", r.structureNote] as [string, string]] : []),
     ["Internal mobility", mobilityText(r.internalMobility)],
     ...(r.roleIsNew ? [["New designation", "Raised under “Others”: not in the department's list yet"] as [string, string]] : []),
   ];

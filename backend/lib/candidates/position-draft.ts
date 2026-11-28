@@ -21,6 +21,8 @@ export interface PositionDetails {
   budgetMinInhand: number | null;
   budgetMaxInhand: number | null;
   summary: string | null;
+  experience?: { minMonths: number | null; maxMonths: number | null } | null;
+  experienceConflict?: boolean;
   tools: string[];
 }
 
@@ -50,6 +52,7 @@ export function draftFromReads(spec: SearchSpec, details: PositionDetails, jdTex
   const must = spec.must;
   const fromFile = jdFileName ? jdFileName.replace(/\.[^.]+$/, "").replace(/[_-]+/g, " ").trim() : "";
   const mustHaves = (must.skill_groups ?? []).map((group) => ({ text: group[0], alts: unique(group.slice(1)) })).filter((g) => g.text);
+  const fallbackExperience = spec.conflicts?.some(c => c.field === "experience") ? {} : must;
   const taken = new Set(mustHaves.flatMap((g) => [g.text, ...g.alts]).map((t) => t.toLowerCase()));
   const tools = unique(details.tools).filter((t) => !taken.has(t.toLowerCase()));
   const toolSet = new Set(tools.map((t) => t.toLowerCase()));
@@ -65,8 +68,8 @@ export function draftFromReads(spec: SearchSpec, details: PositionDetails, jdTex
     budgetMinInhand: details.budgetMinInhand,
     budgetMaxInhand: details.budgetMaxInhand ?? must.max_expected_inhand ?? spec.prefer.max_expected_inhand ?? null,
     summary: details.summary,
-    expMinYears: years(must.min_total_exp_months ?? must.min_relevant_exp_months ?? spec.prefer.min_relevant_exp_months),
-    expMaxYears: years(must.max_total_exp_months ?? must.max_relevant_exp_months),
+    expMinYears: years(details.experience === undefined ? fallbackExperience.min_total_exp_months ?? fallbackExperience.min_relevant_exp_months : details.experience?.minMonths),
+    expMaxYears: years(details.experience === undefined ? fallbackExperience.max_total_exp_months ?? fallbackExperience.max_relevant_exp_months : details.experience?.maxMonths),
     noticeMaxDays: must.max_notice_days ?? spec.prefer.max_notice_days ?? null,
     mustHaves,
     niceToHaves: unique(spec.keywords).filter((k) => !taken.has(k.toLowerCase()) && !toolSet.has(k.toLowerCase())),

@@ -16,7 +16,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import {
     ArrowDown, ArrowUp, Check, ChevronRight, Cpu, KeyRound, Library, Loader2, Lock, OctagonAlert, Plus, RefreshCw, RotateCcw, Search, TriangleAlert, Undo2, X, Zap,
 } from 'lucide-react';
-import type { AiInventoryItem, AiJobRow, AiModelRow, AiModelsData, AiTestResult, Plain } from './api';
+import { createHttpApi, type AiInventoryItem, type AiJobRow, type AiModelRow, type AiModelsData, type AiTestResult, type BrainApi, type Plain } from './api';
 import { useBrain } from './BrainContext';
 import { duration, int, plural } from './labels';
 import { Btn, Card, Chip, Empty, ErrorState, LoadingScreen, Screen, Segmented, cx, s, useMotion } from './ui';
@@ -24,15 +24,30 @@ import { AnimatePresence, motion } from 'framer-motion';
 
 const MISSING = 'Model choices cannot be saved yet: migration 20261028140001 has not been applied. Every job is using its default model.';
 
+type ModelControls = {
+    api: Pick<BrainApi, 'aiModels' | 'saveAiModels' | 'testAiModel'>;
+    report?: (failure: Extract<Plain<never>, { ok: false }>) => void;
+    toast?: (message: string) => void;
+};
+
 export default function ModelsScreen() {
-    const { api, report } = useBrain();
+    const { api, report, toast } = useBrain();
+    return <ModelSettings api={api} report={report} toast={toast} />;
+}
+
+export function HrModelSettings({ orgId }: { orgId: string }) {
+    const api = useMemo(() => createHttpApi(orgId, 'hr'), [orgId]);
+    return <div className={cx(s.theme, '@container min-w-0 rounded-2xl border border-border bg-surface p-4 sm:p-6')}><ModelSettings api={api} hr /></div>;
+}
+
+function ModelSettings({ api, report, toast, hr = false }: ModelControls & { hr?: boolean }) {
     const [nonce, setNonce] = useState(0);
     const [state, setState] = useState<{ n: number; res: Plain<AiModelsData> } | null>(null);
     useEffect(() => {
         let live = true;
         api.aiModels().then(res => {
             if (!live) return;
-            if (!res.ok) report(res); // only failures: this reply carries no console status
+            if (!res.ok) report?.(res);
             setState({ n: nonce, res });
         });
         return () => { live = false; };
@@ -41,20 +56,19 @@ export default function ModelsScreen() {
     const reload = () => setNonce(n => n + 1);
 
     return (
-        <Screen title="AI models"
-            sub="Which model each job in the app uses: a main model and backups, chosen per job and saved at once. A change takes effect within a minute. If a chosen model stops working, the job moves to the next one and finally to its default, so a setting can never stop a job."
+        <Screen title={hr ? 'HR AI models' : 'AI models'}
+            sub={hr ? 'Choose the main model and backups for Otto and Recruitment. Settings apply across the deployment and take effect within a minute.' : 'Choose a main model and backups for each job. Changes take effect within a minute.'}
             actions={<Btn size="sm" icon={RefreshCw} disabled={loading} onClick={reload}>{loading && state ? 'Refreshing…' : 'Refresh'}</Btn>}>
             {!state && <LoadingScreen label="Loading the AI models" />}
             {state && !state.res.ok && <ErrorState what="the AI models" message={state.res.message} onRetry={reload} />}
-            {state?.res.ok && <Body data={state.res.data} reload={reload} busyReload={loading} />}
+            {state?.res.ok && <Body data={state.res.data} reload={reload} busyReload={loading} api={api} report={report} toast={toast} />}
         </Screen>
     );
 }
 
 type Notice = { tone: 'ok' | 'bad'; lines: string[] };
 
-function Body({ data, reload, busyReload }: { data: AiModelsData; reload: () => void; busyReload: boolean }) {
-    const { api, report, toast } = useBrain();
+function Body({ data, reload, busyReload, api, report, toast }: ModelControls & { data: AiModelsData; reload: () => void; busyReload: boolean }) {
     const [q, setQ] = useState('');
     const [only, setOnly] = useState<'all' | 'changed'>('all');
     const [open, setOpen] = useState<Set<string>>(() => new Set());
@@ -88,14 +102,14 @@ function Body({ data, reload, busyReload }: { data: AiModelsData; reload: () => 
         const r = await api.saveAiModels(job.key, models);
         setBusy(null);
         if (!r.ok) {
-            report(r);
+            report?.(r);
             setNotices(n => ({ ...n, [job.key]: { tone: 'bad', lines: [r.message] } }));
             return;
         }
         const message = r.data.message ?? (models === null ? 'Back to the default models.' : 'Saved. It takes effect within a minute.');
         setNotices(n => ({ ...n, [job.key]: { tone: 'ok', lines: [message, ...(r.data.warnings ?? [])] } }));
         setDrafts(d => { const x = { ...d }; delete x[job.key]; return x; });
-        toast(`${job.label}: ${message}`);
+        toast?.(`${job.label}: ${message}`);
         reload();
     };
 
@@ -104,7 +118,7 @@ function Body({ data, reload, busyReload }: { data: AiModelsData; reload: () => 
         setBusy(`test:${k}`);
         const r = await api.testAiModel(job, model);
         setBusy(null);
-        if (!r.ok && r.kind === 'forbidden') report(r);
+        if (!r.ok && r.kind === 'forbidden') report?.(r);
         setTests(t => ({ ...t, [k]: r.ok ? r.data.result : { ok: false, message: r.message } }));
     };
 

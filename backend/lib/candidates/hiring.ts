@@ -78,8 +78,10 @@ export function istText(d: Date): string {
   return `${days[t.getUTCDay()]}, ${t.getUTCDate()} ${months[t.getUTCMonth()]} ${t.getUTCFullYear()} at ${h % 12 || 12}:${m} ${h < 12 ? "am" : "pm"} (IST)`;
 }
 
+type OfferEmailAttachment = { filename: string; content: Buffer; contentType: string };
+
 export interface FlowDeps {
-  sendEmail: (to: string, subject: string, html: string) => Promise<void>;
+  sendEmail: (to: string, subject: string, html: string, attachments?: OfferEmailAttachment[]) => Promise<void>;
   /** A one-time link for an interviewer's scorecard (email_action_tokens), or null when links are not available. */
   scorecardLink: (orgId: string, card: { id: string; userId: string; interviewId: string; expiresAt: Date }, payload: Record<string, unknown>) => Promise<string | null>;
   appUrl: string;
@@ -112,9 +114,9 @@ export const SCORECARD_ENTITY = "recruitment_scorecard";
 
 export function defaultFlowDeps(): FlowDeps {
   return {
-    async sendEmail(to, subject, html) {
+    async sendEmail(to, subject, html, attachments) {
       const { EmailService } = await import("@/backend/services/EmailService");
-      if (!await EmailService.sendEmail({ to, subject, html })) throw new Error("Email delivery failed.");
+      if (!await EmailService.sendEmail({ to, subject, html, attachments })) throw new Error("Email delivery failed.");
     },
     async scorecardLink(orgId, card, payload) {
       if (!APP_URL) return null;
@@ -152,10 +154,10 @@ function mail(heading: string, rows: [string, string][], button: { href: string;
     ${button ? `<p style="margin-top:16px"><a href="${esc(button.href)}" style="display:inline-block;background:#1e293b;color:#fff;padding:11px 22px;border-radius:10px;text-decoration:none;font-weight:bold">${esc(button.label)}</a></p>` : ""}
     ${footer ? `<p style="color:#64748b;font-size:13px">${esc(footer)}</p>` : ""}</div>`;
 }
-async function send(deps: FlowDeps, to: (string | null | undefined)[], subject: string, html: string): Promise<number> {
+async function send(deps: FlowDeps, to: (string | null | undefined)[], subject: string, html: string, attachments?: OfferEmailAttachment[]): Promise<number> {
   let sent = 0;
   for (const email of [...new Set(to.map((e) => (e ?? "").trim().toLowerCase()).filter(Boolean))]) {
-    try { await deps.sendEmail(email, subject, html); sent += 1; } catch (error) { console.error("[candidates] hiring email failed", error); }
+    try { await deps.sendEmail(email, subject, html, attachments); sent += 1; } catch (error) { console.error("[candidates] hiring email failed", error); }
   }
   return sent;
 }
@@ -387,7 +389,7 @@ export async function submitScorecard(client: SupabaseClient, id: string, body: 
     const r = row as { candidate_id: string; application_id: string | null; position_id: string | null; round: string | null };
     await recordAction(client, card.organizationId, { id: card.panelUserId, name: card.panelName }, {
       candidateId: r.candidate_id, applicationId: r.application_id, positionId: r.position_id, action: "remark",
-      toValue: `Scorecard ${r.round ?? ""}: ${s.overall}/5, ${s.recommendation}`.replace(/\s+:/, ":"), remark: s.comments || null, meta: { kind: "scorecard", interviewId: card.interviewId, scorecardId: id },
+      toValue: `Scorecard ${r.round ?? ""}: ${s.overall}/5, ${s.recommendation}`.replace(/\s+:/, ":"), remark: s.comments || null, meta: { kind: "scorecard", interviewId: card.interviewId, scorecardId: id, round: r.round, rating: s.overall, recommendation: s.recommendation },
     }).catch((e) => console.error("[candidates] scorecard history not written", e));
   }
   const { data: others } = await client.from(CARDS).select("id, interview_id, panel_name, ratings, overall, recommendation, comments, submitted_at").eq("interview_id", card.interviewId).neq("id", id).not("submitted_at", "is", null);
@@ -540,14 +542,20 @@ Warm regards,
 {{recruiter_name}}
 {{company}}`;
 
-const OFFER_COLUMNS = "id, candidate_id, application_id, position_id, requisition_id, proposed_ctc, band_min, band_max, breakup, joining_date, status, current_level, current_approver_id, approval_revision, hod_approver_id, level_entered_at, needs_director, letter, released_at, response_at, response_reason, joined_at, dropped_reason, last_contact_at, notices, selected_note, created_by, created_by_name, created_at";
+const OFFER_COLUMNS = "id, candidate_id, application_id, position_id, requisition_id, proposed_ctc, band_min, band_max, breakup, joining_date, status, current_level, current_approver_id, approval_revision, hod_approver_id, level_entered_at, needs_director, letter, released_at, response_at, response_reason, joined_at, dropped_reason, last_contact_at, notices, selected_note, created_by, created_by_name, created_at, updated_at";
 
 /** Owner 2026-11-24 (migration 20261124000004): the LOI page's token and who recorded the answer. Read when there. */
 const OFFER_EXTRA = ", public_token, responded_via";
+const OFFER_FILES = ", letter_file_name, letter_release_started_at, approval_submitted_by";
+const filesMissing = (error: { message?: string } | null | undefined) => /letter_file_name|letter_pdf_base64|letter_release_started_at|approval_submitted_by/.test(error?.message ?? "");
+const OFFER_FILE_MIGRATION = "Apply the recruitment documents and offer letter migration before uploading an offer PDF.";
+const canApproveOffer = (row: Record<string, unknown>, userId: string) => row.created_by !== userId && row.approval_submitted_by !== userId;
 const extrasMissing = (error: { message?: string } | null | undefined) => /public_token|responded_via/.test(error?.message ?? "");
 async function withExtras<T extends { error: { code?: string; message?: string } | null }>(run: (columns: string) => PromiseLike<T>): Promise<T> {
-  const first = await run(OFFER_COLUMNS + OFFER_EXTRA);
-  return first.error && extrasMissing(first.error) ? run(OFFER_COLUMNS) : first;
+  let result = await run(OFFER_COLUMNS + OFFER_EXTRA + OFFER_FILES);
+  if (filesMissing(result.error)) result = await run(OFFER_COLUMNS + OFFER_EXTRA);
+  if (extrasMissing(result.error)) result = await run(OFFER_COLUMNS);
+  return result;
 }
 export const offerPageUrl = (token: string, base = APP_URL) => `${base}/offer/${token}`;
 
@@ -609,11 +617,11 @@ async function toOffers(client: SupabaseClient, orgId: string, rows: Record<stri
       proposedCtc: ctc, bandMin: num(r.band_min), bandMax: max, variancePct: max && ctc > max ? Math.round(((ctc - max) / max) * 1000) / 10 : null,
       breakup: (r.breakup as Record<string, number>) ?? {}, joiningDate: iso(r.joining_date)?.slice(0, 10) ?? null, status: r.status as OfferStatus,
       approvalRevision: Number(r.approval_revision), currentLevel: level, currentApproverName: r.current_approver_id ? names.get(r.current_approver_id as string)?.name ?? null : null, needsDirector: Boolean(r.needs_director),
-      letter: (r.letter as string | null) ?? null, letterGaps: letterGaps(r.letter as string | null), releasedAt: iso(r.released_at), responseAt: iso(r.response_at),
+      letter: (r.letter as string | null) ?? null, letterFileName: (r.letter_file_name as string | null) ?? null, letterGaps: letterGaps(r.letter as string | null), releasedAt: iso(r.released_at), responseAt: iso(r.response_at),
       responseReason: (r.response_reason as string | null) ?? null, joinedAt: iso(r.joined_at), droppedReason: (r.dropped_reason as string | null) ?? null,
       lastContactAt: iso(r.last_contact_at), selectedNote: (r.selected_note as string | null) ?? null, createdByName: (r.created_by_name as string | null) ?? null,
       createdAt: iso(r.created_at) ?? "", events: eventsOf.get(r.id as string) ?? [],
-      canDecide: viewer ? r.status === "pending" && approvers.includes(viewer.userId) && r.created_by !== viewer.userId : undefined,
+      canDecide: viewer ? r.status === "pending" && approvers.includes(viewer.userId) && canApproveOffer(r, viewer.userId) : undefined,
       publicUrl: r.public_token ? offerPageUrl(r.public_token as string) : null,
       respondedVia: (r.responded_via as Offer["respondedVia"]) ?? null,
     };
@@ -700,15 +708,16 @@ export async function createOffer(client: SupabaseClient, orgId: string, by: Act
 }
 
 /** A configured department head reviews the annexure before the Director. The proposer cannot approve. */
-function firstApprover(config: RecruitmentConfig, proposerId: string | null, raiserId: string | null, hod: string | null, ctc: number, bandMax: number | null): { level: OfferLevel; approverId: string; needsDirector: boolean } | null {
+function firstApprover(config: RecruitmentConfig, proposerId: string | null, raiserId: string | null, hod: string | null, ctc: number, bandMax: number | null, revisedBy: string | null = null): { level: OfferLevel; approverId: string; needsDirector: boolean } | null {
   const cfg = config.outreach.offer;
-  const hm = cfg.hiringManagerApproves && raiserId && raiserId !== proposerId ? raiserId : null;
-  const hr = hrHeads(config).find((id) => id !== proposerId) ?? null;
-  const director = directors(config).find((id) => id !== proposerId) ?? null;
+  const available = (id: string) => id !== proposerId && id !== revisedBy;
+  const hm = cfg.hiringManagerApproves && raiserId && available(raiserId) ? raiserId : null;
+  const hr = hrHeads(config).find(available) ?? null;
+  const director = directors(config).find(available) ?? null;
   const needsDirector = Boolean(hod) || (bandMax !== null && ctc > bandMax) || (cfg.directorAlways && Boolean(director));
   if (hod && !director) throw new CandidateActionError(409, "Set an independent Director for department annexure approval.");
   if (hm) return { level: "hiring_manager", approverId: hm, needsDirector };
-  if (hod && hod !== proposerId) return { level: "hod", approverId: hod, needsDirector };
+  if (hod && available(hod)) return { level: "hod", approverId: hod, needsDirector };
   if (hr) return { level: "hr_head", approverId: hr, needsDirector };
   if (director) return { level: "director", approverId: director, needsDirector };
   return null;
@@ -718,12 +727,12 @@ function firstApprover(config: RecruitmentConfig, proposerId: string | null, rai
 function nextApprover(level: OfferLevel, row: Record<string, unknown>, config: RecruitmentConfig): { level: OfferLevel; approverId: string } | null {
   if (level === "hiring_manager") {
     const hod = row.hod_approver_id as string | null;
-    if (hod && hod !== row.created_by && hod !== row.current_approver_id) return { level: "hod", approverId: hod };
-    const hr = hrHeads(config).find((id) => id !== row.created_by);
-    if (hr && (!hod || hod === row.created_by)) return { level: "hr_head", approverId: hr };
+    if (hod && canApproveOffer(row, hod) && hod !== row.current_approver_id) return { level: "hod", approverId: hod };
+    const hr = hrHeads(config).find((id) => canApproveOffer(row, id));
+    if (hr && (!hod || !canApproveOffer(row, hod))) return { level: "hr_head", approverId: hr };
   }
   if (level !== "director" && row.needs_director) {
-    const d = directors(config).find((id) => id !== row.created_by);
+    const d = directors(config).find((id) => canApproveOffer(row, id));
     if (!d) throw new CandidateActionError(409, "This offer needs the Director, and no Director is set in HR Configs.");
     return { level: "director", approverId: d };
   }
@@ -757,7 +766,7 @@ export async function decideOffer(client: SupabaseClient, orgId: string, by: Act
   if (row.status !== "pending") throw new CandidateActionError(409, "This offer is not waiting for approval.");
   const config = await loadRecruitmentConfig(client, orgId);
   const level = row.current_level as OfferLevel;
-  if (row.created_by === by.id) throw new CandidateActionError(403, "An offer cannot be approved by the person who proposed it.");
+  if (!canApproveOffer(row, by.id)) throw new CandidateActionError(403, "An offer cannot be approved by the person who proposed or revised it.");
   if ((parsed.data.approvalRevision !== undefined && parsed.data.approvalRevision !== row.approval_revision) ||
       (parsed.data.expectedLevel && parsed.data.expectedLevel !== level)) {
     throw new CandidateActionError(409, "The annexure or approval step changed. Review the latest offer.");
@@ -779,8 +788,9 @@ export async function decideOffer(client: SupabaseClient, orgId: string, by: Act
     if (error) fail("record the decision", error);
     await event(client, orgId, row.id as string, by, decision === "reject" ? "rejected" : "revise", level, reason);
     const offer = await one(client, orgId, row.id as string, by.id);
-    const proposer = (await emailsOf(client, [row.created_by as string])).get(row.created_by as string);
-    await send(deps, [proposer?.email], `Offer ${decision === "reject" ? "not approved" : "to revise"}: ${offer.candidateName}`, mail(`The offer for ${offer.candidateName} was ${decision === "reject" ? "not approved" : "sent back for a revision"} by ${by.name ?? OFFER_LEVEL_LABELS[level]}.`, [["Why", reason ?? "—"]], null, decision === "revise" ? "Make a new offer from the candidate's Interviews tab." : null));
+    const proposerId = (row.approval_submitted_by ?? row.created_by) as string;
+    const proposer = (await emailsOf(client, [proposerId])).get(proposerId);
+    await send(deps, [proposer?.email], `Offer ${decision === "reject" ? "not approved" : "to revise"}: ${offer.candidateName}`, mail(`The offer for ${offer.candidateName} was ${decision === "reject" ? "not approved" : "sent back for a revision"} by ${by.name ?? OFFER_LEVEL_LABELS[level]}.`, [["Why", reason ?? "—"]], { href: `${deps.appUrl}/recruitment?view=offers`, label: "Open Recruitment → Offers" }, "Open All offers and choose Revise offer to edit and resubmit the original offer."));
     return offer;
   }
   const next = nextApprover(level, row, config);
@@ -800,7 +810,8 @@ export async function decideOffer(client: SupabaseClient, orgId: string, by: Act
   if (error) fail("approve the offer", error);
   await event(client, orgId, row.id as string, by, "approved", level, reason);
   const offer = await one(client, orgId, row.id as string, by.id);
-  const proposer = (await emailsOf(client, [row.created_by as string])).get(row.created_by as string);
+  const proposerId = (row.approval_submitted_by ?? row.created_by) as string;
+  const proposer = (await emailsOf(client, [proposerId])).get(proposerId);
   await send(deps, [proposer?.email], `Offer approved: ${offer.candidateName} · release it`, mail(`The offer for ${offer.candidateName} is approved. Check the letter and release it.`, [["Offer CTC", lpa(offer.proposedCtc)], ["Joining", offer.joiningDate ?? "—"]], { href: `${deps.appUrl}/hr-tickets`, label: "Open Recruitment → Offers" }, offer.letterGaps.length ? `The letter still has blanks: ${offer.letterGaps.join(", ")}.` : null));
   return offer;
 }
@@ -817,6 +828,57 @@ async function draftLetter(client: SupabaseClient, orgId: string, offer: Offer, 
   return (config.offerLetter || DEFAULT_OFFER_LETTER).replace(/\{\{\s*([a-z_]+)\s*\}\}/g, (all, key: string) => values[key] ?? all);
 }
 
+const OFFER_PDF_MAX = 4 * 1024 * 1024;
+const RELEASE_LEASE_MS = 10 * 60_000;
+const releaseInProgress = (row: Record<string, unknown>) => {
+  const claim = iso(row.letter_release_started_at);
+  return !!claim && Date.now() - Date.parse(claim) < RELEASE_LEASE_MS;
+};
+
+function matchReleaseClaim<T extends { eq(column: string, value: string): T; is(column: string, value: null): T }>(query: T, row: Record<string, unknown>): T {
+  if (!("letter_release_started_at" in row)) return query;
+  const claim = iso(row.letter_release_started_at);
+  return claim ? query.eq("letter_release_started_at", claim) : query.is("letter_release_started_at", null);
+}
+
+export async function attachOfferPdf(client: SupabaseClient, orgId: string, by: Actor, id: string, name: string, bytes: Buffer): Promise<Offer> {
+  const fileName = name.trim();
+  if (!/\.pdf$/i.test(fileName) || /[\x00-\x1f\x7f/\\]/.test(fileName) || fileName.length > 180
+      || bytes.subarray(0, 5).toString() !== "%PDF-" || bytes.length > OFFER_PDF_MAX) {
+    throw new CandidateActionError(400, "Choose an offer letter PDF up to 4 MB, with a valid filename.");
+  }
+  const row = await loadOffer(client, orgId, id);
+  if (!("letter_file_name" in row)) throw new CandidateActionError(503, OFFER_FILE_MIGRATION);
+  if (row.status !== "approved" || releaseInProgress(row)) throw new CandidateActionError(409, "Attach the PDF after approval and before release.");
+  const update = client.from(OFFERS).update({ letter_file_name: fileName, letter_pdf_base64: bytes.toString("base64"), updated_at: new Date().toISOString() })
+    .eq("organization_id", orgId).eq("id", id).eq("status", "approved").eq("approval_revision", row.approval_revision);
+  const { data, error } = await matchReleaseClaim(update, row).select("id");
+  if (error) fail("attach the offer letter", error);
+  if (!data?.length) throw new CandidateActionError(409, "The offer changed. Reload it before attaching the PDF.");
+  await event(client, orgId, id, by, "letter_attached", null, fileName);
+  return one(client, orgId, id, by.id);
+}
+
+async function offerPdf(client: SupabaseClient, orgId: string, row: Record<string, unknown>): Promise<OfferEmailAttachment | null> {
+  if (!row.letter_file_name) return null;
+  const { data, error } = await client.from(OFFERS).select("letter_file_name, letter_pdf_base64")
+    .eq("organization_id", orgId).eq("id", row.id as string).maybeSingle();
+  if (error) fail("read the offer PDF", error);
+  if (!data?.letter_pdf_base64 || !data?.letter_file_name) throw new CandidateActionError(409, "The attached PDF is unavailable. Upload it again before release.");
+  return { filename: data.letter_file_name, content: Buffer.from(data.letter_pdf_base64, "base64"), contentType: "application/pdf" };
+}
+
+export function offerPdfDownload(file: OfferEmailAttachment): Response {
+  const filename = encodeURIComponent(file.filename).replace(/'/g, "%27");
+  return new Response(new Uint8Array(file.content), { headers: {
+    "Content-Type": "application/pdf", "Content-Disposition": `attachment; filename="offer-letter.pdf"; filename*=UTF-8''${filename}`,
+    "Cache-Control": "private, no-store", "X-Content-Type-Options": "nosniff",
+  } });
+}
+
+export async function staffOfferPdf(client: SupabaseClient, orgId: string, id: string) {
+  return offerPdf(client, orgId, await loadOffer(client, orgId, id));
+}
 const LetterInput = z.object({ letter: z.string().trim().min(20, "The letter is too short.").max(20_000), joiningDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable().optional() });
 
 /** HR edits the letter (and the joining date) before release. */
@@ -824,9 +886,12 @@ export async function editLetter(client: SupabaseClient, orgId: string, by: Acto
   const parsed = LetterInput.safeParse(body ?? {});
   if (!parsed.success) throw new CandidateActionError(400, parsed.error.issues[0]?.message ?? "Check the letter.");
   const row = await loadOffer(client, orgId, id);
-  if (row.status !== "approved") throw new CandidateActionError(409, "Only an approved offer's letter can be edited (before release).");
-  const { error } = await client.from(OFFERS).update({ letter: parsed.data.letter, ...(parsed.data.joiningDate !== undefined ? { joining_date: parsed.data.joiningDate } : {}), updated_at: new Date().toISOString() }).eq("organization_id", orgId).eq("id", row.id as string);
+  if (row.status !== "approved" || releaseInProgress(row)) throw new CandidateActionError(409, "Only an approved offer's letter can be edited before release.");
+  const update = client.from(OFFERS).update({ letter: parsed.data.letter, ...(parsed.data.joiningDate !== undefined ? { joining_date: parsed.data.joiningDate } : {}), updated_at: new Date().toISOString() })
+    .eq("organization_id", orgId).eq("id", id).eq("status", "approved").eq("approval_revision", row.approval_revision);
+  const { data, error } = await matchReleaseClaim(update, row).select("id");
   if (error) fail("save the letter", error);
+  if (!data?.length) throw new CandidateActionError(409, "The offer changed. Reload it before saving the letter.");
   await event(client, orgId, row.id as string, by, "letter_edited", null, null);
   return one(client, orgId, row.id as string, by.id);
 }
@@ -844,19 +909,46 @@ export async function releaseOffer(client: SupabaseClient, orgId: string, by: Ac
   if (!email) throw new CandidateActionError(400, "The candidate has no email address. Add it to their record, then release.");
   const offer = (await toOffers(client, orgId, [row]))[0];
   const config = await loadRecruitmentConfig(client, orgId);
-  // Owner 2026-11-24: the letter of intent's own page, where the candidate accepts or declines (no login).
-  let token = (row.public_token as string | null | undefined) ?? null;
-  if (!token && "public_token" in row) {
-    token = randomBytes(24).toString("base64url");
-    const { error: tokenError } = await client.from(OFFERS).update({ public_token: token }).eq("organization_id", orgId).eq("id", row.id as string);
-    if (tokenError) { console.error("[candidates] offer page token not saved", tokenError); token = null; }
+  if (releaseInProgress(row)) throw new CandidateActionError(409, "This offer is already being released.");
+  const claim = "letter_release_started_at" in row ? new Date().toISOString() : null;
+  if (claim) {
+    const update = client.from(OFFERS).update({ letter_release_started_at: claim }).eq("organization_id", orgId)
+      .eq("id", id).eq("status", "approved").eq("approval_revision", row.approval_revision).eq("updated_at", iso(row.updated_at));
+    const result = await matchReleaseClaim(update, row).select("id");
+    if (result.error) fail("prepare to release the offer", result.error);
+    if (!result.data?.length) throw new CandidateActionError(409, "The offer changed or is already being released. Reload it first.");
   }
-  const pageUrl = token ? offerPageUrl(token, deps.appUrl || APP_URL) : null;
-  const html = `<div style="font-family:Georgia,serif;font-size:15px;line-height:1.6;color:#0f172a;white-space:pre-wrap">${esc(row.letter)}</div>${breakupHtml(offer.breakup, config.outreach.offer)}${pageUrl ? `<p style="margin-top:16px;font-family:system-ui,sans-serif"><a href="${esc(pageUrl)}" style="display:inline-block;background:#1e293b;color:#fff;padding:11px 22px;border-radius:10px;text-decoration:none;font-weight:bold">Accept or decline</a></p>` : ""}`;
-  const subject = `Letter of intent: ${offer.positionTitle ?? "your new role"} at ${config.outreach.companyName || "Autopilot Offices"}`;
-  const mailed = await send(deps, [email], subject, html);
-  await logMessage(client, orgId, { candidateId: row.candidate_id as string, channel: "email", kind: "offer_letter", recipient: email, subject, ok: mailed > 0, error: mailed ? null : "The email could not be sent", by: by.name });
-  if (!mailed) throw new CandidateActionError(502, "The email could not be sent. Try again.");
+  let token = (row.public_token as string | null | undefined) ?? null;
+  let pageUrl: string | null = null;
+  let emailed = false;
+  try {
+    const attachment = await offerPdf(client, orgId, row);
+    if (!token && "public_token" in row) {
+      token = randomBytes(24).toString("base64url");
+      const { error: tokenError } = await client.from(OFFERS).update({ public_token: token }).eq("organization_id", orgId).eq("id", id);
+      if (tokenError) { console.error("[candidates] offer page token not saved", tokenError); token = null; }
+    }
+    pageUrl = token ? offerPageUrl(token, deps.appUrl || APP_URL) : null;
+    const html = `<div style="font-family:Georgia,serif;font-size:15px;line-height:1.6;color:#0f172a;white-space:pre-wrap">${esc(row.letter)}</div>${breakupHtml(offer.breakup, config.outreach.offer)}${pageUrl ? `<p style="margin-top:16px;font-family:system-ui,sans-serif"><a href="${esc(pageUrl)}" style="display:inline-block;background:#1e293b;color:#fff;padding:11px 22px;border-radius:10px;text-decoration:none;font-weight:bold">Accept or decline</a></p>` : ""}`;
+    const subject = `Letter of intent: ${offer.positionTitle ?? "your new role"} at ${config.outreach.companyName || "Autopilot Offices"}`;
+    emailed = (await send(deps, [email], subject, html, attachment ? [attachment] : undefined)) > 0;
+    if (emailed) {
+      const now = (deps.now?.() ?? new Date()).toISOString();
+      let update = client.from(OFFERS).update({ status: "released", released_at: now, updated_at: now, ...(claim ? { letter_release_started_at: null } : {}) })
+        .eq("organization_id", orgId).eq("id", id).eq("status", "approved");
+      if (claim) update = update.eq("letter_release_started_at", claim);
+      const { error, data } = await update.select("id");
+      if (error) fail("record the release", error);
+      if (!data?.length) throw new CandidateActionError(409, "Delivery succeeded but the offer state changed. Check the sent email before retrying.");
+    }
+    await logMessage(client, orgId, { candidateId: row.candidate_id as string, channel: "email", kind: "offer_letter", recipient: email, subject, ok: emailed, error: emailed ? null : "The email could not be sent", by: by.name });
+    if (!emailed) throw new CandidateActionError(502, "The email could not be sent. Try again.");
+  } finally {
+    if (claim && !emailed) {
+      const { error } = await client.from(OFFERS).update({ letter_release_started_at: null }).eq("organization_id", orgId).eq("id", id).eq("letter_release_started_at", claim);
+      if (error) console.error("[candidates] offer release claim could not be cleared", error);
+    }
+  }
   if (pageUrl && deps.sendWhatsApp) {
     const t = config.outreach.templates.find((x) => x.id === config.outreach.offer.loiTemplateId && x.channel === "whatsapp");
     const phoneKey = parsePhone((person as { phone?: string | null } | null)?.phone ?? "").key;
@@ -870,9 +962,6 @@ export async function releaseOffer(client: SupabaseClient, orgId: string, by: Ac
       }
     }
   }
-  const now = (deps.now?.() ?? new Date()).toISOString();
-  const { error } = await client.from(OFFERS).update({ status: "released", released_at: now, updated_at: now }).eq("organization_id", orgId).eq("id", row.id as string);
-  if (error) fail("record the release", error);
   await event(client, orgId, row.id as string, by, "released", null, null);
   await recordAction(client, orgId, by, { candidateId: row.candidate_id as string, applicationId: (row.application_id as string | null) ?? null, positionId: (row.position_id as string | null) ?? null, action: "remark", toValue: "Offer letter released", remark: null, meta: { kind: "offer_released", offerId: row.id } });
   await moveTo(client, orgId, by, row, "offer", null);
@@ -932,19 +1021,30 @@ const PAGE_TOKEN = /^[A-Za-z0-9_-]{32}$/;
 
 export interface PublicOffer {
   companyName: string; firstName: string; role: string | null; location: string | null; letter: string; ctc: string; joiningDate: string | null;
+  letterFileName?: string | null;
   breakup: ReturnType<typeof breakupGroups>; status: "open" | "accepted" | "declined" | "closed"; answeredAt: string | null;
 }
 
 async function offerByToken(client: SupabaseClient, token: string): Promise<Record<string, unknown> | null> {
   if (!PAGE_TOKEN.test(token)) return null;
-  const { data, error } = await client.from(OFFERS).select(`organization_id, ${OFFER_COLUMNS}${OFFER_EXTRA}`).eq("public_token", token).maybeSingle();
+  const { data, error } = await withExtras(columns => client.from(OFFERS).select(`organization_id, ${columns}`).eq("public_token", token).maybeSingle());
   if (error) { if (!extrasMissing(error)) console.error("[candidates] offer page: read failed", error); return null; }
-  return (data as Record<string, unknown> | null) ?? null;
+  const row = data as Record<string, unknown> | null;
+  if (!row) return null;
+  const person = await client.from("candidates").select("removed_at").eq("organization_id", row.organization_id as string).eq("id", row.candidate_id as string).maybeSingle();
+  return person.error || !person.data || person.data.removed_at ? null : row;
+}
+
+const PUBLIC_OFFER_STATUSES = ["released", "accepted", "declined", "joined"];
+
+export async function publicOfferPdf(client: SupabaseClient, token: string) {
+  const row = await offerByToken(client, token);
+  return row && PUBLIC_OFFER_STATUSES.includes(row.status as string) ? offerPdf(client, row.organization_id as string, row) : null;
 }
 
 export async function publicOffer(client: SupabaseClient, token: string): Promise<PublicOffer | null> {
   const row = await offerByToken(client, token);
-  if (!row || !["released", "accepted", "declined", "joined"].includes(row.status as string)) return null;
+  if (!row || !PUBLIC_OFFER_STATUSES.includes(row.status as string)) return null;
   const orgId = row.organization_id as string;
   const [config, offer, { data: pos }] = await Promise.all([
     loadRecruitmentConfig(client, orgId),
@@ -953,7 +1053,7 @@ export async function publicOffer(client: SupabaseClient, token: string): Promis
   ]);
   return {
     companyName: config.outreach.companyName, firstName: firstName(offer.candidateName), role: offer.positionTitle, location: (pos as { location?: string | null } | null)?.location ?? null,
-    letter: (row.letter as string | null) ?? "", ctc: lpa(offer.proposedCtc), joiningDate: offer.joiningDate, breakup: breakupGroups(offer.breakup, config.outreach.offer),
+    letter: (row.letter as string | null) ?? "", letterFileName: offer.letterFileName, ctc: lpa(offer.proposedCtc), joiningDate: offer.joiningDate, breakup: breakupGroups(offer.breakup, config.outreach.offer),
     status: row.status === "released" ? "open" : row.status === "declined" ? "declined" : row.status === "accepted" || row.status === "joined" ? "accepted" : "closed",
     answeredAt: iso(row.response_at),
   };
@@ -1043,33 +1143,53 @@ export async function markHandoverTaken(client: SupabaseClient, orgId: string, b
 const BreakupInput = z.object({
   breakup: z.record(z.string().trim().min(1).max(60), z.number().min(0).max(100_000_000)),
   proposedCtc: z.number().positive("Give the offer CTC.").max(1_000_000_000).optional(),
+  joiningDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable().optional(),
+  note: z.string().trim().max(2000).optional(),
+  approvalRevision: z.number().int().positive().optional(),
 });
 
 /**
  * HR edits the breakup (and the CTC) until release. Any change starts the approval again from the first approver, so
  * nobody approves an annexure the candidate will not see. Logged in the audit log.
  */
-export async function editBreakup(client: SupabaseClient, orgId: string, by: Actor, id: string, body: unknown, deps: FlowDeps): Promise<Offer> {
+export async function editBreakup(client: SupabaseClient, orgId: string, by: Actor, id: string, body: unknown, deps: FlowDeps, revising = false): Promise<Offer> {
   const parsed = BreakupInput.safeParse(body ?? {});
   if (!parsed.success) throw new CandidateActionError(400, parsed.error.issues[0]?.message ?? "Check the breakup.");
   if (Object.keys(parsed.data.breakup).length > 40) throw new CandidateActionError(400, "Too many rows in the breakup.");
   const row = await loadOffer(client, orgId, id);
-  if (row.status !== "pending" && row.status !== "approved") throw new CandidateActionError(409, "The breakup can be changed only until the offer is released.");
+  const allowed = revising ? ["rejected"] : ["pending", "approved"];
+  if (!allowed.includes(row.status as string)) throw new CandidateActionError(409, revising ? "Only a rejected or returned offer can be revised." : "The breakup can be changed only until the offer is released.");
+  if (releaseInProgress(row) || (parsed.data.approvalRevision !== undefined && parsed.data.approvalRevision !== row.approval_revision)) {
+    throw new CandidateActionError(409, "The offer changed or is being released. Reload the offer.");
+  }
+  const revisedBy = revising ? by.id : (row.approval_submitted_by as string | null) ?? null;
+  if (revising && !("approval_submitted_by" in row) && by.id !== row.created_by) throw new CandidateActionError(503, OFFER_FILE_MIGRATION);
   const ctc = parsed.data.proposedCtc ?? Number(row.proposed_ctc);
   const config = await loadRecruitmentConfig(client, orgId);
-  const { data: req } = row.requisition_id ? await client.from("recruitment_requisitions").select("raised_by").eq("id", row.requisition_id as string).maybeSingle() : { data: null };
-  const chain = firstApprover(config, row.created_by as string | null, (req as { raised_by?: string | null } | null)?.raised_by ?? null, row.hod_approver_id as string | null, ctc, num(row.band_max));
+  const { data: req } = row.requisition_id ? await client.from("recruitment_requisitions").select("raised_by").eq("organization_id", orgId).eq("id", row.requisition_id as string).maybeSingle() : { data: null };
+  const chain = firstApprover(config, row.created_by as string | null, (req as { raised_by?: string | null } | null)?.raised_by ?? null, row.hod_approver_id as string | null, ctc, num(row.band_max), revisedBy);
   if (!chain) throw new CandidateActionError(409, "Nobody can approve this offer: set the HR Head and Director in the Tech dashboard → HR Configs.");
   const now = (deps.now?.() ?? new Date()).toISOString();
-  const { data: changed, error } = await client.from(OFFERS).update({
+  let update = client.from(OFFERS).update({
     approval_revision: Number(row.approval_revision) + 1, breakup: parsed.data.breakup, proposed_ctc: ctc, status: "pending", current_level: chain.level, current_approver_id: chain.approverId, level_entered_at: now,
     needs_director: chain.needsDirector, letter: null, notices: {}, updated_at: now,
-  }).eq("organization_id", orgId).eq("id", row.id as string).in("status", ["pending", "approved"]).eq("approval_revision", row.approval_revision).select("id");
-  if (error) fail("save the breakup", error);
+    ...("letter_file_name" in row ? { letter_file_name: null, letter_pdf_base64: null, letter_release_started_at: null } : {}),
+    ...("public_token" in row ? { public_token: null } : {}),
+    ...(revising ? {
+      response_reason: null,
+      ...("approval_submitted_by" in row ? { approval_submitted_by: by.id } : {}),
+      ...(parsed.data.joiningDate !== undefined ? { joining_date: parsed.data.joiningDate } : {}),
+      ...(parsed.data.note !== undefined ? { selected_note: parsed.data.note || null } : {}),
+    } : {}),
+  }).eq("organization_id", orgId).eq("id", row.id as string).eq("status", row.status as string).eq("approval_revision", row.approval_revision);
+  update = matchReleaseClaim(update, row);
+  const { data: changed, error } = await update.select("id");
+  if (error?.code === "23505") throw new CandidateActionError(409, "This person already has an open offer for this position.");
+  if (error) fail(revising ? "revise the offer" : "save the breakup", error);
   if (!changed?.length) throw new CandidateActionError(409, "The annexure changed. Reload the offer.");
   await deps.revokeOfferLinks?.(row.id as string).catch((e) => console.error("[candidates] revoking offer links failed", e));
-  await event(client, orgId, row.id as string, by, "breakup_edited", null, "The breakup changed: approval starts again");
-  await audit(client, orgId, by, { action: Number(row.proposed_ctc) !== ctc ? "offer_edit" : "breakup_edit", entityType: "offer", entityId: row.id as string, before: { ctc: Number(row.proposed_ctc), breakup: row.breakup }, after: { ctc, breakup: parsed.data.breakup } });
+  await event(client, orgId, row.id as string, by, revising ? "resubmitted" : "breakup_edited", null, revising ? "Revised offer sent for approval" : "The breakup changed: approval starts again");
+  await audit(client, orgId, by, { action: revising || Number(row.proposed_ctc) !== ctc ? "offer_edit" : "breakup_edit", entityType: "offer", entityId: row.id as string, before: { ctc: Number(row.proposed_ctc), breakup: row.breakup }, after: { ctc, breakup: parsed.data.breakup } });
   const offer = await one(client, orgId, row.id as string, by.id);
   await tellApprover(client, orgId, deps, offer, chain.approverId, chain.level);
   return offer;

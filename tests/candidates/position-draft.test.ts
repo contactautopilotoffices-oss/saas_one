@@ -76,6 +76,15 @@ describe("the position draft", () => {
     assert.deepEqual([d.budgetMinInhand, d.budgetMaxInhand], [40000, 60000], "the budget read back from the salary filter when the position has none");
   });
 
+  it("uses the JD's quoted experience over generic search filters and rejects invented ranges", () => {
+    const jd = "Minimum candidate experience: 0–1 years. Notice period: 30 days.";
+    const fields = { title: "AI Intern", tools: [], experience_min_months: 0, experience_max_months: 12, experience_evidence: "0-1 years" };
+    const result = (data: unknown) => draftFromReads(SPEC, parsePositionDetails(JSON.stringify(data), jd), jd, "ai-intern.pdf");
+    assert.deepEqual([result(fields).expMinYears, result(fields).expMaxYears], [0, 1]);
+    assert.deepEqual([result({ ...fields, experience_max_months: 24 }).expMinYears, result({ ...fields, experience_evidence: "3 years" }).expMaxYears], [null, null]);
+    assert.equal(result({ ...fields, experience_conflict: "0-1 years vs 3+ years" }).expMinYears, null);
+  });
+
   it("reads the position reader's answer without inventing, and its schema stays within Claude's limit", () => {
     assert.equal(looksLikeDetails('{"title":"x","tools":[]}'), true);
     assert.equal(looksLikeDetails("nope"), false);
@@ -86,7 +95,7 @@ describe("the position draft", () => {
     assert.throws(() => parsePositionDetails("not json"));
     const props = POSITION_READER_SCHEMA.properties as Record<string, { type: unknown }>;
     const nullable = Object.values(props).filter((p) => Array.isArray(p.type) && (p.type as unknown[]).includes("null")).length;
-    assert.ok(nullable <= 16 && nullable === 9, `nullable keys: ${nullable}`);
+    assert.ok(nullable <= 16 && nullable === 13, `nullable keys: ${nullable}`);
     assert.match(POSITION_READER_SYSTEM, /Do not skip any/);
     assert.match(POSITION_READER_SYSTEM, /RUPEES PER MONTH/);
   });

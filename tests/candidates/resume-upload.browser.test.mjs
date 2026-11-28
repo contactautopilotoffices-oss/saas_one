@@ -1,6 +1,5 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { createServer } from 'node:http';
 import { readFile, mkdir } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { resolve } from 'node:path';
@@ -17,11 +16,7 @@ test('resume preview and library work on desktop and phone without uploading bef
         define: { 'process.env.NODE_ENV': '"development"' },
     });
     const css = (await postcss([tailwind()]).process(await readFile('app/globals.css', 'utf8'), { from: resolve('app/globals.css') })).css;
-    const server = createServer((_req, res) => {
-        res.setHeader('content-type', 'text/html');
-        res.end(`<style>${css}</style><div id="root" style="padding:16px"></div><script>${bundle.outputFiles[0].text.replace(/<\/script/gi, '<\\/script')}</script>`);
-    });
-    await new Promise(done => server.listen(0, '127.0.0.1', done));
+    const html = `<style>${css}</style><div id="root" style="padding:16px"></div><script>${bundle.outputFiles[0].text.replace(/<\/script/gi, '<\\/script')}</script>`;
     const executablePath = process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE || [
         'C:/Program Files/Google/Chrome/Application/chrome.exe', '/usr/bin/chromium',
     ].find(path => existsSync(path));
@@ -42,6 +37,7 @@ test('resume preview and library work on desktop and phone without uploading bef
                     let data;
                     if (method === 'PATCH') data = { ok: true };
                     else if (method === 'POST') data = { files: body.files.map(f => ({ index: f.index, outcome: 'duplicate' })) };
+                    else if (path.includes('/resume-mail')) data = { connections: [] };
                     else if (path.includes('/positions')) data = { positions: [{ title: 'Facility Manager' }] };
                     else if (path.includes('/summary')) data = { total: 1, totalBytes: 1000, devices: [{ label: 'HR User', count: 1, bytes: 1000, oldest: null, newest: null, lastUploadedAt: null }], linked: 1, unlinked: 0, textPending: 0, extractPending: 0, unreadable: 0, rejected: 0, other: 0, scanPending: 0, uploader: 'HR User' };
                     else if (path.includes('/repeats')) data = { repeats: [], total: 0 };
@@ -50,10 +46,16 @@ test('resume preview and library work on desktop and phone without uploading bef
                     return new Response(JSON.stringify(data), { status: 200, headers: { 'Content-Type': 'application/json' } });
                 };
             });
-            await page.goto(`http://127.0.0.1:${server.address().port}`);
+            await page.route('http://localhost/', route => route.fulfill({ body: html, contentType: 'text/html' }));
+            await page.goto('http://localhost/');
             await page.getByRole('combobox', { name: 'Uploaded by', exact: true }).waitFor();
             assert.match(await page.getByRole('combobox', { name: 'Uploaded by', exact: true }).innerText(), /All users/);
-            await page.getByRole('button', { name: 'Import & sources', exact: true }).click();
+            const filePickers = [];
+            page.on('filechooser', chooser => filePickers.push(chooser));
+            await page.getByRole('button', { name: 'Upload resumes', exact: true }).click();
+            assert.equal(filePickers.length, 0);
+            await page.getByRole('button', { name: 'Bulk upload folder', exact: true }).waitFor();
+            await page.getByRole('button', { name: 'Upload resume files', exact: true }).waitFor();
             await page.getByLabel('Designation / role sourced for', { exact: true }).fill('Facility Manager');
             await page.locator('input[type=file][accept]').setInputFiles([
                 { name: 'Asha_Naukri.pdf', mimeType: 'application/pdf', buffer: Buffer.from('test CV one') },
@@ -86,6 +88,5 @@ test('resume preview and library work on desktop and phone without uploading bef
         }
     } finally {
         await browser?.close();
-        await new Promise(done => server.close(done));
     }
 });

@@ -1,191 +1,132 @@
 'use client';
 
 import React, { useEffect, useState } from 'react';
-import { Check, MessageCircle, X } from 'lucide-react';
-import { oneLine, STAGE_MESSAGE_MAX } from '@/backend/lib/candidates/stage-list';
-import type { CandidateRecord, OutreachPreview, OutreachRecord } from '@/backend/lib/candidates/types';
+import { Send } from 'lucide-react';
+import { isSelectionStage, oneLine, STAGE_MESSAGE_MAX, type StageDef } from '@/backend/lib/candidates/stage-list';
+import type { CampaignSummary } from '@/backend/lib/candidates/outreach-campaigns';
+import type { CandidateRecord, OutreachPreview, StageNotification } from '@/backend/lib/candidates/types';
 import { api, qs } from './api';
-import { formatDate } from './format';
 import { BTN_GHOST, BTN_PRIMARY, Dialog, INPUT, LABEL, Spinner, useUi, WELL } from './ui';
 
-/*
- * Outreach on WhatsApp (owner 2026-11-16, mockup board 7). One body, two homes: a dialog that opens right after a
- * card is dropped on a stage marked for WhatsApp (PipelineView, the pipeline panel), and the "Send update" section in
- * the candidate's panel (CandidateDetails), where the position is chosen first. A person clicks Send every time.
- *
- * Owner 2026-11-19, editable messages: the message is the Meta-approved stage update template; its opening and
- * closing are fixed, and the middle is HR's text, prefilled from the stage's default (Configurations) and edited here.
- * It is about the stage the person is in now, in that position.
- */
+type UpdateProps = {
+    orgId: string;
+    record: CandidateRecord;
+    positionId: string;
+    stage: StageDef;
+    notification: StageNotification;
+    onSent: () => void;
+};
 
-function CheckLine({ ok, label, soft = false }: { ok: boolean; label: string; soft?: boolean }) {
-    return (
-        <li className="flex items-center gap-x-2 text-sm text-text-primary">
-            <span className={`inline-flex h-4 w-4 shrink-0 items-center justify-center rounded-full ${ok ? 'bg-success/15 text-green-800' : soft ? 'bg-warning/15 text-amber-800' : 'bg-error/10 text-red-800'}`} aria-hidden>
-                {ok ? <Check className="h-3 w-3" /> : <X className="h-3 w-3" />}
-            </span>
-            <span className="sr-only">{ok ? 'Yes: ' : soft ? 'Warning: ' : 'No: '}</span>{label}
-        </li>
-    );
-}
-
-/**
- * The message (with HR's text to edit), the checks and the Send button for one (record, position). Fetches its own
- * preview; nothing is sent until Send is clicked, and the server runs the same checks again.
- */
-export function OutreachBody({ orgId, record, positionId, onSent, onSkip, skipLabel = 'Skip for now' }: {
-    orgId: string; record: CandidateRecord; positionId: string;
-    onSent: (sent: OutreachRecord) => void; onSkip: () => void; skipLabel?: string;
-}) {
+export function OutreachBody({ orgId, record, positionId, stage, notification, onSent, onSkip }: UpdateProps & { onSkip: () => void }) {
     const { notify, reportError } = useUi();
-    const [state, setState] = useState<{ key: string; preview: OutreachPreview | null; error: string } | null>(null);
-    const key = JSON.stringify([orgId, record.id, positionId]);
-    // HR's text: the stage's default until edited (null = not edited yet).
-    const [edited, setEdited] = useState<{ key: string; text: string } | null>(null);
+    const [preview, setPreview] = useState<OutreachPreview | null>(null);
+    const [waError, setWaError] = useState('');
+    const [mail, setMail] = useState<{ address?: string; message?: string } | null>(null);
+    const [whatsapp, setWhatsapp] = useState(false);
+    const [email, setEmail] = useState(false);
+    const [edited, setEdited] = useState<string | null>(null);
+    const [busy, setBusy] = useState(false);
+    const [results, setResults] = useState<{ whatsapp?: string; email?: string } | null>(null);
+    const expectedStage = stage.key;
+
     useEffect(() => {
         const ctrl = new AbortController();
-        void api<{ preview: OutreachPreview }>(`/api/candidates/outreach/preview${qs({ orgId, applicationId: record.id, positionId, kind: 'stage_update' })}`, { signal: ctrl.signal }).then(res => {
-            if (ctrl.signal.aborted) return;
-            if (res.ok) setState({ key, preview: res.data.preview, error: '' });
-            else { if (res.noAccess) reportError(res); setState({ key, preview: null, error: res.error }); }
-        });
+        const signal = ctrl.signal;
+        if (notification.whatsapp) {
+            void api<{ preview: OutreachPreview }>(`/api/candidates/outreach/preview${qs({ orgId, applicationId: record.id, positionId, kind: 'stage_update', expectedStage })}`, { signal }).then(res => {
+                if (signal.aborted) return;
+                if (res.ok) setPreview(res.data.preview);
+                else { setWaError(res.error); if (res.noAccess) reportError(res); }
+            });
+        }
+        if (notification.emailTemplateId && record.email) {
+            void api<{ mailboxes: { address: string }[] }>(`/api/candidates/outreach/campaigns${qs({ orgId })}`, { signal }).then(res => {
+                if (signal.aborted) return;
+                if (!res.ok && res.noAccess) reportError(res);
+                const address = res.ok ? res.data.mailboxes[0]?.address : undefined;
+                setMail({ address, message: res.ok ? 'Connect Zoho Mail to send email.' : res.error });
+            });
+        }
         return () => ctrl.abort();
-        // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [key]);
-    const preview = state?.key === key ? state.preview : null;
-    const error = state?.key === key ? state.error : '';
-    const update = preview?.stageUpdate ?? null;
-    const text = edited?.key === key ? edited.text : update?.defaultText ?? '';
-    const clean = oneLine(text);
-    const tooLong = clean.length > STAGE_MESSAGE_MAX;
+    }, [orgId, record.id, record.email, positionId, expectedStage, notification.whatsapp, notification.emailTemplateId, reportError]);
 
-    const [busy, setBusy] = useState(false);
+    const update = preview?.stageUpdate;
+    const text = edited ?? (update?.defaultText || (stage.kind === 'rejected'
+        ? 'Thank you for your time. We have decided not to move forward with your application for this role.'
+        : isSelectionStage(stage) ? 'We are pleased to let you know you are moving forward in the recruitment process. Our recruiter will share the next steps.' : ''));
+    const clean = oneLine(text);
+    const canSend = (whatsapp || email) && (!whatsapp || (preview?.canSend && clean.length > 0 && clean.length <= STAGE_MESSAGE_MAX)) && (!email || !!mail?.address);
+
     const send = async () => {
-        if (!preview?.canSend || busy || !clean || tooLong) return;
+        if (!canSend || busy || results) return;
         setBusy(true);
-        const res = await api<{ outreach: OutreachRecord }>('/api/candidates/outreach', { json: { orgId, applicationId: record.id, positionId, kind: 'stage_update', message: clean } });
+        const [wa, em] = await Promise.all([
+            whatsapp ? api('/api/candidates/outreach', { json: { orgId, applicationId: record.id, positionId, kind: 'stage_update', expectedStage, message: clean } }) : null,
+            email ? api<{ campaign: CampaignSummary }>('/api/candidates/outreach/campaigns', { json: {
+                orgId, action: 'send', applicationIds: [record.id], positionId, expectedStage, emailTemplateId: notification.emailTemplateId,
+            } }) : null,
+        ]);
         setBusy(false);
-        if (!res.ok) { notify(res.error, 'error'); if (res.noAccess) reportError(res); return; }
-        notify(`WhatsApp sent to ${record.fullName}`, 'success');
-        onSent(res.data.outreach);
+        if (wa && !wa.ok && wa.noAccess) reportError(wa);
+        if (em && !em.ok && em.noAccess) reportError(em);
+        const sentEmail = em?.ok && em.data.campaign.counts.sent > 0;
+        if ((!wa || wa.ok) && (!em || sentEmail)) {
+            notify(`Update sent to ${record.fullName}`, 'success');
+            onSent();
+            return;
+        }
+        setResults({
+            whatsapp: wa ? (wa.ok ? 'Sent' : wa.error) : undefined,
+            email: em ? (sentEmail ? 'Sent' : em.ok ? 'See Outreach → Sends for the delivery status.' : em.error) : undefined,
+        });
     };
 
     return (
         <div className="space-y-4">
-            {!preview && !error && <p className="flex items-center gap-x-2 text-sm text-text-tertiary"><Spinner className="h-3.5 w-3.5" />Preparing the message</p>}
-            {error && <p role="alert" className="text-sm text-error">{error}</p>}
-            {preview && (
-                <>
-                    <div className="grid gap-x-4 gap-y-4 @2xl:grid-cols-[minmax(0,1fr)_220px]">
-                        <div className="min-w-0">
-                            {update && (
-                                <>
-                                    <label htmlFor="cand-outreach-text" className={LABEL}>Your update · about <span className="font-semibold text-text-primary">{update.stageName}</span></label>
-                                    <textarea id="cand-outreach-text" rows={3} value={text} onChange={e => setEdited({ key, text: e.target.value })} disabled={busy}
-                                        placeholder="e.g. Your L1 interview is with the Finance Head on Friday at 11 am. Please bring your ID proof."
-                                        className={`${INPUT} mt-1.5 h-auto min-h-[84px] resize-y py-2 leading-relaxed`} />
-                                    <p className={`mt-1 flex flex-wrap justify-between gap-x-2 text-xs ${tooLong ? 'font-medium text-red-800' : 'text-text-tertiary'}`}>
-                                        <span>{!update.defaultText ? 'This stage has no default text: write one here, or set it in Configurations.' : 'Prefilled from Configurations. Edit it for this candidate.'} Sent as one paragraph.</span>
-                                        <span className="tabular-nums">{clean.length}/{STAGE_MESSAGE_MAX}</span>
-                                    </p>
-                                </>
-                            )}
-                            <p className={`${LABEL} mt-3`}>WhatsApp preview{preview.phoneMasked ? ` · to +91 ${preview.phoneMasked}` : ''} · via AiSensy</p>
-                            <div className="relative mt-2 max-w-[440px] rounded-xl bg-[#E7F8EF] px-4 py-3 text-sm leading-relaxed text-text-primary">
-                                {update ? (
-                                    <p className="whitespace-pre-wrap">{update.opening}{'\n\n'}<span className={clean ? 'rounded bg-white/70 px-0.5' : 'italic text-text-tertiary'}>{clean || '[your update]'}</span>{'\n\n'}{update.closing}</p>
-                                ) : <p className="whitespace-pre-wrap">{preview.message}</p>}
-                                <p className="mt-2 text-[11px] text-text-secondary">{preview.footer}</p>
-                            </div>
-                            <p className="mt-2 text-xs text-text-tertiary">The opening and closing are the Meta-approved template <span className="font-medium text-text-secondary">{preview.campaign}</span>; only the highlighted part is your text.</p>
-                        </div>
-                        <div className={`${WELL} px-4 py-3`}>
-                            <p className={LABEL}>Checks</p>
-                            <ul className="mt-2 space-y-1.5">
-                                <CheckLine ok={preview.checks.notBlacklisted} label="Not blacklisted" />
-                                <CheckLine ok={preview.checks.phoneValid} label="Mobile number on record" />
-                                <CheckLine ok={preview.checks.notSentBefore} label={preview.sentBefore ? `Already told on ${formatDate(preview.sentBefore.at)}${preview.sentBefore.byName ? ` by ${preview.sentBefore.byName}` : ''}` : preview.positionTitle ? `Not told before for ${preview.positionTitle}` : 'Not told before'} />
-                                <CheckLine ok={preview.checks.roleNamed} label={preview.roleTitle ? `Role: ${preview.roleTitle}` : 'No role to name'} />
-                                <CheckLine ok={preview.checks.withinHours} label={preview.checks.withinHours ? 'Within 9 am – 7 pm IST' : 'Outside 9 am – 7 pm IST'} soft />
-                            </ul>
-                            <p className="mt-2 text-xs text-text-tertiary">Recorded in Activity: who sent it and when.</p>
-                        </div>
-                    </div>
-                    {preview.blockedBy && <p role="status" className="text-sm font-medium text-red-800">{preview.blockedBy}</p>}
-                </>
+            <fieldset disabled={busy || !!results}>
+                <legend className={LABEL}>Send via</legend>
+                <div className="mt-2 grid gap-2 sm:grid-cols-2">
+                    <label className={`${WELL} flex items-start gap-2 p-3 text-sm`}>
+                        <input type="checkbox" checked={whatsapp} disabled={!preview?.canSend} onChange={e => setWhatsapp(e.target.checked)} className="mt-1 accent-primary" />
+                        <span>WhatsApp<span className="block text-xs text-text-secondary">{!notification.whatsapp ? 'Unavailable for this stage' : waError || preview?.blockedBy || (preview ? (preview.checks.withinHours ? preview.phoneMasked : 'Outside 9 am – 7 pm IST') : 'Checking availability…')}</span></span>
+                    </label>
+                    <label className={`${WELL} flex items-start gap-2 p-3 text-sm`}>
+                        <input type="checkbox" checked={email} disabled={!mail?.address} onChange={e => setEmail(e.target.checked)} className="mt-1 accent-primary" />
+                        <span>Email<span className="block break-all text-xs text-text-secondary">{!notification.emailTemplateId ? 'Unavailable for this stage' : !record.email ? 'No email on record' : mail?.address || mail?.message || 'Checking mailbox…'}</span></span>
+                    </label>
+                </div>
+            </fieldset>
+            {whatsapp && update && (
+                <div>
+                    <label htmlFor="cand-outreach-text" className={LABEL}>WhatsApp message</label>
+                    <textarea id="cand-outreach-text" rows={3} value={text} onChange={e => setEdited(e.target.value)} disabled={busy || !!results}
+                        className={`${INPUT} mt-1.5 h-auto min-h-[84px] resize-y py-2`} />
+                    <p className={`mt-1 text-xs ${clean.length > STAGE_MESSAGE_MAX ? 'text-error' : 'text-text-secondary'}`}>{clean.length}/{STAGE_MESSAGE_MAX} characters. Uses the approved WhatsApp template.</p>
+                    <details className="mt-2 text-sm">
+                        <summary className="cursor-pointer font-medium text-text-secondary">Preview WhatsApp</summary>
+                        <p className={`${WELL} mt-2 whitespace-pre-wrap p-3 text-text-primary`}>{[update.opening, clean, update.closing].filter(Boolean).join('\n\n')}</p>
+                    </details>
+                </div>
             )}
-            <div className="flex flex-wrap items-center justify-end gap-x-2 gap-y-2">
-                <button type="button" onClick={onSkip} disabled={busy} className={BTN_GHOST}>{skipLabel}</button>
-                <button type="button" onClick={() => void send()} disabled={busy || !preview?.canSend || !clean || tooLong} className={BTN_PRIMARY}>{busy ? <Spinner /> : <MessageCircle className="h-4 w-4" />}Send on WhatsApp</button>
+            {results && <div className={`${WELL} space-y-1 px-3 py-2 text-sm`} role="status">
+                {results.whatsapp && <p><strong>WhatsApp</strong> · {results.whatsapp}</p>}
+                {results.email && <p><strong>Email</strong> · {results.email}</p>}
+            </div>}
+            <div className="flex flex-wrap justify-end gap-2">
+                <button type="button" onClick={results ? onSent : onSkip} disabled={busy} className={BTN_GHOST}>{results ? 'Close' : 'Skip for now'}</button>
+                {!results && <button type="button" onClick={() => void send()} disabled={busy || !canSend} className={BTN_PRIMARY}>{busy ? <Spinner /> : <Send className="h-4 w-4" />}Send</button>}
             </div>
         </div>
     );
 }
 
-/** Right after a drop on a stage marked for WhatsApp: "Tell them?" */
-export function OutreachDialog({ orgId, open, record, positionId, positionTitle, stageName, movedRemark, onClose, onSent }: {
-    orgId: string; open: boolean; record: CandidateRecord | null; positionId: string | null; positionTitle: string | null; stageName: string;
-    movedRemark?: string | null; onClose: () => void; onSent: (sent: OutreachRecord) => void;
+export function OutreachDialog({ positionTitle, remark, onClose, ...update }: UpdateProps & {
+    positionTitle: string; remark: string | null; onClose: () => void;
 }) {
     return (
-        <Dialog
-            open={open && !!record}
-            onClose={onClose}
-            labelId="cand-outreach-title"
-            size="lg"
-            title={record ? `${record.fullName} is now ${stageName}. Tell ${record.fullName.split(' ')[0]}?` : ''}
-            description={[positionTitle, movedRemark ? `“${movedRemark}”` : null].filter(Boolean).join(' · ') || undefined}
-        >
-            {record && positionId && <div className="@container"><OutreachBody orgId={orgId} record={record} positionId={positionId} onSent={onSent} onSkip={onClose} /></div>}
+        <Dialog open onClose={onClose} labelId="cand-outreach-title" size="md"
+            title={`Notify ${update.record.fullName}?`} description={[positionTitle, update.stage.name, remark].filter(Boolean).join(' · ')}>
+            <OutreachBody {...update} onSkip={onClose} />
         </Dialog>
-    );
-}
-
-/** In the candidate's panel: pick the position, then the same body (an update about their stage there). */
-export function OutreachSection({ orgId, record, onClose, onSent }: { orgId: string; record: CandidateRecord; onClose: () => void; onSent: (sent: OutreachRecord) => void }) {
-    const [positionId, setPositionId] = useState<string>('');
-    const [memberships, setMemberships] = useState<{ id: string; rows: { position: { id: string; title: string; location: string | null; status: 'open' | 'closed' }; member: { stage: string } }[] } | null>(null);
-    useEffect(() => {
-        const ctrl = new AbortController();
-        void api<{ memberships: NonNullable<typeof memberships>['rows'] }>(`/api/candidates/${encodeURIComponent(record.id)}/positions${qs({ orgId })}`, { signal: ctrl.signal }).then(res => {
-            if (ctrl.signal.aborted) return;
-            const rows = res.ok ? res.data.memberships : [];
-            setMemberships({ id: record.id, rows });
-            // The first position they are in (the latest move first).
-            const first = rows[0];
-            if (first) setPositionId(first.position.id);
-        });
-        return () => ctrl.abort();
-    }, [orgId, record.id]);
-    const rows = memberships?.id === record.id ? memberships.rows : null;
-
-    return (
-        <section className={`${WELL} @container px-4 py-4`} aria-label="Send update">
-            <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1">
-                <span className="text-sm font-semibold text-text-primary">Send update on WhatsApp</span>
-                <span className="text-xs text-text-secondary">about their stage in the position · a person sends it, every time</span>
-            </div>
-            {rows && rows.length === 0 ? (
-                <div className="mt-3 flex flex-wrap items-center justify-between gap-x-3 gap-y-2">
-                    <p className="text-sm text-text-secondary">Add {record.fullName.split(' ')[0]} to a position first: the update is about their stage there.</p>
-                    <button type="button" onClick={onClose} className={BTN_GHOST}>Close</button>
-                </div>
-            ) : (
-                <>
-                    <div className="mt-3">
-                        <label htmlFor="cand-outreach-position" className="sr-only">Position</label>
-                        <select id="cand-outreach-position" value={positionId} onChange={e => setPositionId(e.target.value)} disabled={!rows} className={INPUT}>
-                            {!rows && <option value="">Loading the positions</option>}
-                            {(rows ?? []).map(({ position }) => <option key={position.id} value={position.id}>{position.title}{position.location ? ` · ${position.location}` : ''}{position.status === 'closed' ? ' · closed' : ''}</option>)}
-                        </select>
-                    </div>
-                    {positionId && (
-                        <div className="mt-4">
-                            <OutreachBody orgId={orgId} record={record} positionId={positionId} onSent={onSent} onSkip={onClose} skipLabel="Cancel" />
-                        </div>
-                    )}
-                </>
-            )}
-        </section>
     );
 }

@@ -141,12 +141,13 @@ async function plainCall<T>(url: string, init?: RequestInit): Promise<Plain<T>> 
     return { ok: true, data: body as unknown as T };
 }
 
-export function createHttpApi(orgId: string): BrainApi {
+export function createHttpApi(orgId: string, modelScope: 'brain' | 'hr' = 'brain'): BrainApi {
     const base = '/api/brain/console';
     const q = (params: Record<string, string | number>) =>
         new URLSearchParams({ orgId, ...Object.fromEntries(Object.entries(params).map(([k, v]) => [k, String(v)])) }).toString();
     const view = <T,>(params: Record<string, string | number>) => call<T>(`${base}?${q(params)}`);
     const json = (method: 'PUT' | 'POST', body: unknown): RequestInit => ({ method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+    const modelUrl = `/api/task-manager/ai-models?${q({ scope: modelScope })}`;
 
     return {
         overview: days => view({ view: 'overview', days }),
@@ -165,9 +166,9 @@ export function createHttpApi(orgId: string): BrainApi {
         postTicketReview: body => call<TicketReviewView>(`${base}/tickets?${q({})}`, json('POST', body)) as Promise<TicketReviewResult>,
         guidance: () => call(`${base}/guidance?${q({})}`),
         postGuidance: body => call<GuidanceView>(`${base}/guidance?${q({})}`, json('POST', body)) as Promise<GuidanceResult>,
-        aiModels: () => plainCall(`/api/task-manager/ai-models?${q({})}`),
-        saveAiModels: (job, models) => plainCall(`/api/task-manager/ai-models?${q({})}`, json('POST', { action: 'save', job, models })),
-        testAiModel: (job, model) => plainCall(`/api/task-manager/ai-models?${q({})}`, json('POST', { action: 'test', job, model })),
+        aiModels: () => plainCall(modelUrl),
+        saveAiModels: (job, models) => plainCall(modelUrl, json('POST', { action: 'save', job, models })),
+        testAiModel: (job, model) => plainCall(modelUrl, json('POST', { action: 'test', job, model })),
         categories: () => plainCall(`${base}/categories?${q({})}`),
         postCategories: body => plainCall(`${base}/categories?${q({})}`, json('POST', body)),
     };
